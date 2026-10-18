@@ -1,34 +1,68 @@
 # LockPort
 
-LockPort. Easy warlock summoning for turtle wow.
+Easy warlock summoning for World of Warcraft 1.12 / Turtle WoW 1.18.
+Originally written by Gurky.
 
-Addon orginally written by Gurky.
+## How it works
 
-## Requirments
+- Be a warlock in a party or raid.
+- When a group member starts a message with **123** (say, yell, whisper, party, raid), they're added to the summon list on every LockPort user in the group.
+- Click a name to summon. The /say announcement and whisper only go out once the ritual has **actually started**.
+- If the summon can't happen, LockPort **tells the party/raid why** and whispers the player, e.g.
+  `[LockPort] Can't summon Bob: Bob is in combat.`
+  The player stays on the list so you can try again.
 
-- Be a Warlock!
+### Failure reasons that are announced
 
-## How it works:
+| Checked before casting | Reported after casting |
+|---|---|
+| Target is offline | Any error the server/client gives for the cast (e.g. *Target is in combat*, *You must be standing to do that*, *Invalid target*) |
+| Target is dead | The ritual was interrupted (player goes back on the list) |
+| Target is in combat | The ritual didn't start |
+| Target has Evil Twin (removed from list) | |
+| You are in combat | |
+| You are out of Soul Shards | |
 
-- You must be in a raid or party group.
-- If someone types 123 in Yell, Whisper, Party, Raid, or Raid Leader the Player name gets added to the LockPort list and is synced accros all LockPort users. Any user added to the list will also trigger a sound alert to let the Warlocks know someone is on the list (Sound is subject to change). 
-- Leftclick to move the frame.
-- Type /lockport to show or hide the LockPort Window.  
-- Left click to Summon.
-- CTRL + Left click to target the player.
-- Right click to remove.
-- If no player is on the list the frame is hidden again (type /lockport to manually show).
+Repeated identical failures are throttled (10 s) so the raid isn't spammed.
 
-## Options:
+## The window
 
-- /lockport help - Shows commands in chat.
-- /lockport show - Shows the current summon list.
-- /lockport zone - Enables or Disables including Zone information in summoning messages.
-- /lockport whisper - Enables or Disables whispering the target when summoning.
-- /lockport shards - Enables or Disables shard count message when you summon.
-- /lockport settings - Opens the settings window.
-- /lockport sound - Enables or Disables the sound on summon request.
-- /lockport message <text> - Sets the custom /say message used when summoning. Use /lockport message clear to restore the generated message.
+Classic dialog style built from stock Blizzard art: class icons, class-coloured names, and a live status column (`Here`, `In combat`, `Dead`, `Offline`, distance in yards, or zone). The footer shows your Soul Shards and how many helpers are close enough to click the portal.
 
-LockPort works in both raid and party groups. Custom message settings are saved by the game when you log out or reload the UI; avoid closing the client with Alt+F4 if you need the latest changes saved.
+- **Left-click** a name: summon · **Ctrl+click**: target · **Right-click**: remove
+- **Summon** button: next in line (warlocks first, then oldest request; skips offline/dead/in-combat)
+- **Add Target**: put your current target on the list
+- Drag to move (position is saved), or lock it in Options.
+- Key bindings: *Key Bindings → LockPort*
 
+## Commands
+
+```
+/lockport                 show / hide the window
+/lockport next            summon the next person in line
+/lockport add [name]      add a name (or your target)
+/lockport remove <name>   remove a name      /lockport clear   clear the list
+/lockport show            print the list
+/lockport options         options window
+/lockport message <text>  custom /say message, tokens {name} {zone} {shards}  ("message clear" resets)
+/lockport zone | whisper | shards | sound | announce | flash | autoremove | lock    toggles
+/lockport mods            which client mods are in use
+/lockport reset           reset window position
+```
+
+## Optional client mods
+
+LockPort works on a plain client. If these mods are present it uses them automatically:
+
+| Mod | What LockPort gets from it |
+|---|---|
+| **SuperWoW** | `UNIT_CASTEVENT` matched by your GUID and the Ritual's spell id, so start/fail detection can't be confused by other spells; Evil Twin detected by spell id; yard distances via `UnitPosition` |
+| **UnitXP SP3** | Exact distance for the status column and the "already here" check (instead of the ~28 yd interact check); taskbar flash on new requests while alt-tabbed |
+| **Nampower** | `SPELL_FAILED_SELF` as an extra, server-confirmed failure signal |
+| **ClassicAPI** | Detected, but nothing it adds is needed by LockPort |
+
+Note: the ritual summons your **current target**, so LockPort targets the player for you. Keep them targeted until the portal is clicked.
+
+## Compatibility
+
+v3 still uses the `RSAdd` / `RSRemove` addon messages, so it syncs lists with older LockPort versions in the same raid. Your v2 settings are kept.
