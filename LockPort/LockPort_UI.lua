@@ -20,13 +20,11 @@ local CLASS_COORDS = {
 	PALADIN = { 0, 0.25, 0.5, 0.75 },
 }
 
--- Tooltip border (thin, silver) around the dialog background; the gold
--- dialog header plate behind the title is kept.
 local DIALOG_BACKDROP = {
 	bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-	edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-	tile = true, tileSize = 32, edgeSize = 16,
-	insets = { left = 4, right = 4, top = 4, bottom = 4 },
+	edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+	tile = true, tileSize = 32, edgeSize = 32,
+	insets = { left = 11, right = 12, top = 12, bottom = 11 },
 }
 
 local function ClassColor(class)
@@ -60,7 +58,7 @@ local function MakeDialog(name, width, height, title)
 	f.title = text
 
 	local close = CreateFrame("Button", name .. "CloseButton", f, "UIPanelCloseButton")
-	close:SetPoint("TOPRIGHT", f, "TOPRIGHT", 1, 1)
+	close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -5, -5)
 	return f
 end
 

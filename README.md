@@ -42,7 +42,7 @@ Only one warlock replies even if several run LockPort. The one summoning that pl
 
 ## The window
 
-Classic style built from stock Blizzard art (thin silver tooltip border, gold dialog header plate): class icons, class-coloured names, and a live status column (`Here`, `In combat`, `Dead`, `Offline`, distance in yards, or zone). The footer shows your Soul Shards and how many helpers are close enough to click the portal.
+Classic dialog style built from stock Blizzard art: class icons, class-coloured names, and a live status column (`Here`, `In combat`, `Dead`, `Offline`, distance in yards, or zone). The footer shows your Soul Shards and how many helpers are close enough to click the portal.
 
 - **Left-click** a name: summon · **Ctrl+click**: target · **Right-click**: remove
 - **Summon** button: next in line (warlocks first, then oldest request; skips offline/dead/in-combat)
