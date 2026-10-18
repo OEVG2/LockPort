@@ -25,9 +25,24 @@ Originally written by Gurky.
 
 Repeated identical failures are throttled (10 s) so the raid isn't spammed.
 
+### Status whispers
+
+When someone types 123 and there's nothing new to do, they get a whisper explaining why:
+
+- **Already here:** `You're already here (12 yd from me) - no summon needed.` (removed from the list)
+- **Typing 123 again while waiting:** their place in line plus what's holding it up:
+  - `Summoning you now - waiting for helpers to click the portal (1/2 near me).`
+  - `You're #2 in line - I'm summoning Bob right now.`
+  - `You're #1 in line - waiting on helpers: I need 2 people near me to click the portal (0 here).`
+  - `You're #3 in line, but you're in combat - drop combat first.`
+  - also: dead, I'm in combat, I'm out of Soul Shards, `N ahead of you`, `you're next!`
+- **Typing 123 again right after being summoned:** `I cast your summon 30s ago - accept the prompt if you still see it.` and they're put back on the list in case it expired.
+
+Only one warlock replies even if several run LockPort. The one summoning that player answers first, the others back off.
+
 ## The window
 
-Classic dialog style built from stock Blizzard art: class icons, class-coloured names, and a live status column (`Here`, `In combat`, `Dead`, `Offline`, distance in yards, or zone). The footer shows your Soul Shards and how many helpers are close enough to click the portal.
+Classic style built from stock Blizzard art (thin silver tooltip border, gold dialog header plate): class icons, class-coloured names, and a live status column (`Here`, `In combat`, `Dead`, `Offline`, distance in yards, or zone). The footer shows your Soul Shards and how many helpers are close enough to click the portal.
 
 - **Left-click** a name: summon · **Ctrl+click**: target · **Right-click**: remove
 - **Summon** button: next in line (warlocks first, then oldest request; skips offline/dead/in-combat)
@@ -45,7 +60,7 @@ Classic dialog style built from stock Blizzard art: class icons, class-coloured 
 /lockport show            print the list
 /lockport options         options window
 /lockport message <text>  custom /say message, tokens {name} {zone} {shards}  ("message clear" resets)
-/lockport zone | whisper | shards | sound | announce | flash | autoremove | lock    toggles
+/lockport zone | whisper | shards | sound | announce | status | flash | autoremove | lock    toggles
 /lockport mods            which client mods are in use
 /lockport reset           reset window position
 ```

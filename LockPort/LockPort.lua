@@ -22,6 +22,7 @@ LP.NEARBY_YARDS = 30
 local PREFIX_ADD     = "RSAdd"
 local PREFIX_REMOVE  = "RSRemove"
 local PREFIX_VERSION = "lp"
+local PREFIX_WHISPER = "LPWhisper"   -- "<kind>:<name>" claim so only one warlock replies
 
 local CHAT_TAG = "|cff9482c9LockPort|r: "
 local ANNOUNCE_TAG = "[LockPort] "
@@ -30,6 +31,9 @@ local REPO_URL = "https://github.com/Phaestas323/LockPort"
 LP.requests = {}   -- { {name=, t=}, ... } in request order
 LP.roster   = {}
 LP.mods     = {}
+LP.users    = {}   -- names seen sending LockPort addon messages
+LP.claims   = {}   -- "<kind>:<name>" -> time a status whisper went out
+LP.whisperQueue = {}
 
 local DEFAULTS = {
 	whisper       = true,   -- whisper the target "Summoning you..."
@@ -40,6 +44,7 @@ local DEFAULTS = {
 	customMessage = false,
 	announceFail  = true,   -- tell the party/raid why a summon failed
 	whisperFail   = true,   -- whisper the target why their summon failed
+	whisperStatus = true,   -- reply to "123" when already here / already on the list
 	flash         = true,   -- flash the taskbar on a new request (UnitXP SP3)
 	autoRemove    = true,   -- drop people from the list once they're standing next to you
 	autoShow      = true,   -- pop the window open on a new request
@@ -124,7 +129,7 @@ end
 function LP:ModStatusText()
 	local function s(label, on) return label .. ": " .. (on and "|cff40ff40yes|r" or "|cff808080no|r") end
 	local m = self.mods
-	return s("SuperWoW", m.superwow) .. "   " .. s("Nampower", m.nampower) .. "   " ..
+	return s("SuperWoW", m.superwow) .. "   " .. s("Nampower", m.nampower) .. "\n" ..
 	       s("UnitXP SP3", m.unitxp) .. "   " .. s("ClassicAPI", m.classicapi)
 end
 
@@ -534,6 +539,7 @@ end
 -- Called every frame from the event frame.
 function LP:OnUpdate(elapsed)
 	local now = GetTime()
+	if self.whisperQueue[1] then self:ProcessWhisperQueue(now) end
 	local p = self.pending
 	if p and not p.done then
 		if not p.started then
@@ -572,6 +578,141 @@ function LP:OnUpdate(elapsed)
 end
 
 ---------------------------------------------------------------------------
+-- Status whispers ("you're already here", "you're #3 in line...")
+--
+-- Every LockPort warlock in the group sees the same "123", so replies are
+-- coordinated: the warlock summoning that player answers at once, the others
+-- wait a staggered delay (alphabetical among known LockPort warlocks) and
+-- drop their reply if someone else's LPWhisper claim arrives first.
+---------------------------------------------------------------------------
+function LP:OnTrigger(name, info, event)
+	if name == UnitName("player") then return end
+	if not self:IsWarlock() then
+		-- non-warlocks with LockPort just relay the request
+		self:SendAddon(PREFIX_ADD, name)
+		return
+	end
+
+	-- already standing next to me
+	if info.online and self:IsNearby(info.unit) then
+		if self:FindRequest(name) then self:RemoveRequest(name, true) end
+		self:QueueWhisper(name, "here", self:HereText(info.unit))
+		return
+	end
+
+	local p = self.pending
+	if self:FindRequest(name) or (p and not p.done and p.name == name) then
+		-- repeat request: tell them why they're still waiting
+		self:SendAddon(PREFIX_ADD, name)
+		self:QueueWhisper(name, "status", self:StatusText(name, info))
+		return
+	end
+
+	local w = self.watch
+	local recent = w and w.name == name and GetTime() - w.t < 120
+	if self:AddRequest(name, true) then
+		if recent then
+			self:QueueWhisper(name, "status", "I cast your summon " .. math.floor(GetTime() - w.t) ..
+				"s ago - accept the prompt if you still see it. I put you back on the list in case it expired.")
+			self.watch = nil
+		elseif event == "CHAT_MSG_WHISPER" then
+			local pos = self:QueuePosition(name)
+			SendChatMessage(ANNOUNCE_TAG .. "You're on the summon list" .. (pos and (" (#" .. pos .. ")") or "") .. ".", "WHISPER", nil, name)
+		end
+	end
+end
+
+function LP:QueuePosition(name)
+	self:ScanRoster()
+	for i, e in ipairs(self:SortedRequests()) do
+		if e.name == name then return i end
+	end
+	return nil
+end
+
+function LP:HereText(unit)
+	local d = self:Distance(unit)
+	if d then
+		return "You're already here (" .. math.floor(d) .. " yd from me) - no summon needed."
+	end
+	return "You're already standing next to me - no summon needed."
+end
+
+function LP:StatusText(name, info)
+	local u = info.unit
+	local p = self.pending
+	if p and not p.done and p.name == name then
+		if not p.started then return "Casting your summon right now - accept the prompt when it shows up." end
+		local h = self:CountHelpers(name)
+		if h >= 2 then
+			return "Summoning you now - the portal is up, waiting for 2 people to click it. Accept the prompt when it shows up."
+		end
+		return "Summoning you now - waiting for helpers to click the portal (" .. h .. "/2 near me). Accept the prompt when it shows up."
+	end
+
+	local pos = self:QueuePosition(name)
+	local line = pos and ("You're #" .. pos .. " in line") or "You're on the list"
+	if UnitIsDeadOrGhost(u) then return line .. ", but you're dead - release or get a res first." end
+	if UnitAffectingCombat(u) then return line .. ", but you're in combat - drop combat first." end
+	if p and not p.done then return line .. " - I'm summoning " .. p.name .. " right now." end
+	if UnitAffectingCombat("player") then return line .. " - I'm in combat, I'll summon you right after." end
+	if self:CountShards() < 1 then return line .. " - I'm out of Soul Shards." end
+	local h = self:CountHelpers(name)
+	if h < 2 then
+		return line .. " - waiting on helpers: I need 2 people near me to click the portal (" .. h .. " here)."
+	end
+	if pos and pos > 1 then
+		return line .. " - " .. (pos - 1) .. " ahead of you."
+	end
+	return line .. " - you're next!"
+end
+
+function LP:ResponderDelay(name)
+	local p = self.pending
+	if p and not p.done and p.name == name then return 0 end
+	local me = UnitName("player")
+	local locks, seenMe = {}, false
+	for n, info in pairs(self.roster) do
+		if info.class == "WARLOCK" and info.online and (n == me or self.users[n]) then
+			table.insert(locks, n)
+			if n == me then seenMe = true end
+		end
+	end
+	if not seenMe then table.insert(locks, me) end
+	table.sort(locks)
+	for i, n in ipairs(locks) do
+		if n == me then return 0.4 + (i - 1) * 1.0 end
+	end
+	return 0.4
+end
+
+function LP:QueueWhisper(name, kind, text)
+	if not LockPortOptions.whisperStatus then return end
+	local key = kind .. ":" .. name
+	local now = GetTime()
+	if self.claims[key] and now - self.claims[key] < 12 then return end
+	for _, q in ipairs(self.whisperQueue) do
+		if q.key == key then return end
+	end
+	table.insert(self.whisperQueue, { key = key, name = name, text = text, at = now + self:ResponderDelay(name) })
+end
+
+function LP:ProcessWhisperQueue(now)
+	local q = self.whisperQueue
+	for i = table.getn(q), 1, -1 do
+		local w = q[i]
+		if self.claims[w.key] and now - self.claims[w.key] < 12 then
+			table.remove(q, i)
+		elseif now >= w.at then
+			table.remove(q, i)
+			self.claims[w.key] = now
+			self:SendAddon(PREFIX_WHISPER, w.key)
+			SendChatMessage(ANNOUNCE_TAG .. w.text, "WHISPER", nil, w.name)
+		end
+	end
+end
+
+---------------------------------------------------------------------------
 -- Events
 ---------------------------------------------------------------------------
 function LP:MatchesTrigger(msg)
@@ -599,19 +740,30 @@ function LP:OnEvent(event)
 	if event == "VARIABLES_LOADED" then return self:Initialize() end
 	if not LockPortOptions then return end
 	if CHAT_EVENTS[event] then
-		if arg1 and arg2 and self:MatchesTrigger(arg1) and self:ScanRoster()[arg2] then
-			if self:AddRequest(arg2, true) and event == "CHAT_MSG_WHISPER" and self:IsWarlock() then
-				SendChatMessage(ANNOUNCE_TAG .. "You're on the summon list.", "WHISPER", nil, arg2)
-			end
+		if arg1 and arg2 and self:MatchesTrigger(arg1) then
+			local info = self:ScanRoster()[arg2]
+			if info then self:OnTrigger(arg2, info, event) end
 		end
 
 	elseif event == "CHAT_MSG_ADDON" then
+		if arg1 == PREFIX_ADD or arg1 == PREFIX_REMOVE or arg1 == PREFIX_VERSION or arg1 == PREFIX_WHISPER then
+			if arg4 then self.users[arg4] = true end
+		end
 		if arg1 == PREFIX_ADD then
-			self:AddRequest(arg2, false)
+			-- another warlock added someone who is standing next to me: they don't need a summon
+			local info = self:ScanRoster()[arg2]
+			if self:IsWarlock() and LockPortOptions.autoRemove and info and info.online and self:IsNearby(info.unit) then
+				self:SendAddon(PREFIX_REMOVE, arg2)
+			else
+				self:AddRequest(arg2, false)
+			end
 		elseif arg1 == PREFIX_REMOVE then
 			self:RemoveRequest(arg2, false)
 		elseif arg1 == PREFIX_VERSION then
 			self:OnVersionMessage(arg2)
+		elseif arg1 == PREFIX_WHISPER then
+			-- another LockPort warlock already answered this player
+			self.claims[arg2] = GetTime()
 		end
 
 	-- cast tracking (works on a plain client) --------------------------------
@@ -726,8 +878,9 @@ local TOGGLES = {
 	zone = "zone info in /say", whisper = "whisper the target", shards = "shard count in /say",
 	sound = "sound on new request", announce = "announce failures to group",
 	flash = "taskbar flash", autoremove = "auto-remove arrived players", lock = "window lock",
+	status = "status whispers (already here / place in line)",
 }
-local TOGGLE_KEYS = { announce = "announceFail", autoremove = "autoRemove", lock = "locked" }
+local TOGGLE_KEYS = { announce = "announceFail", autoremove = "autoRemove", lock = "locked", status = "whisperStatus" }
 
 function LP:Slash(msg)
 	msg = Trim(msg)
@@ -747,7 +900,7 @@ function LP:Slash(msg)
 			"|cffffd200/lockport show|r - print the list",
 			"|cffffd200/lockport options|r - open the options window",
 			"|cffffd200/lockport message <text>|r or |cffffd200message clear|r - custom /say ({name} {zone} {shards})",
-			"|cffffd200/lockport zone, whisper, shards, sound, announce, flash, autoremove, lock|r - toggles",
+			"|cffffd200/lockport zone, whisper, shards, sound, announce, status, flash, autoremove, lock|r - toggles",
 			"|cffffd200/lockport mods|r - which client mods LockPort is using",
 			"|cffffd200/lockport reset|r - reset the window position",
 		}

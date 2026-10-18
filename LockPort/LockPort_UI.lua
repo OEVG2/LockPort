@@ -20,11 +20,13 @@ local CLASS_COORDS = {
 	PALADIN = { 0, 0.25, 0.5, 0.75 },
 }
 
+-- Tooltip border (thin, silver) around the dialog background; the gold
+-- dialog header plate behind the title is kept.
 local DIALOG_BACKDROP = {
 	bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-	edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-	tile = true, tileSize = 32, edgeSize = 32,
-	insets = { left = 11, right = 12, top = 12, bottom = 11 },
+	edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+	tile = true, tileSize = 32, edgeSize = 16,
+	insets = { left = 4, right = 4, top = 4, bottom = 4 },
 }
 
 local function ClassColor(class)
@@ -58,7 +60,7 @@ local function MakeDialog(name, width, height, title)
 	f.title = text
 
 	local close = CreateFrame("Button", name .. "CloseButton", f, "UIPanelCloseButton")
-	close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -5, -5)
+	close:SetPoint("TOPRIGHT", f, "TOPRIGHT", 1, 1)
 	return f
 end
 
@@ -376,7 +378,7 @@ local function MakeInput(parent, name, key, width, x, y)
 end
 
 local function CreateOptionsFrame()
-	local f = MakeDialog("LockPortOptionsFrame", 340, 470, "LockPort Options")
+	local f = MakeDialog("LockPortOptionsFrame", 340, 480, "LockPort Options")
 	f:SetFrameStrata("DIALOG")
 	f:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
 	f:SetScript("OnDragStart", function() this:StartMoving() end)
@@ -397,11 +399,12 @@ local function CreateOptionsFrame()
 	hint:SetText("Tokens: {name}  {zone}  {shards}")
 
 	y = -170
-	MakeSection(f, "When a summon fails", y)
-	MakeCheck(f, "announceFail", "Tell the party/raid why", "e.g. \"[LockPort] Can't summon Bob: Bob is in combat.\"", 20, y - 16)
-	MakeCheck(f, "whisperFail", "Whisper the player the reason", "Lets them know they're still on the list and what to fix.", 20, y - 38)
+	MakeSection(f, "Whispers & announcements", y)
+	MakeCheck(f, "announceFail", "Tell the party/raid why a summon failed", "e.g. \"[LockPort] Can't summon Bob: Bob is in combat.\"", 20, y - 16)
+	MakeCheck(f, "whisperFail", "Whisper the player why it failed", "Lets them know they're still on the list and what to fix.", 20, y - 38)
+	MakeCheck(f, "whisperStatus", "Answer repeat 123s with a status whisper", "If someone types 123 while already here, or again while waiting, they're told why: already here, place in line, waiting on helpers, summoning someone else, etc. Only one LockPort warlock replies.", 20, y - 60)
 
-	y = -240
+	y = -262
 	MakeSection(f, "Requests", y)
 	MakeCheck(f, "sound", "Play a sound on new requests", "Plays a short sound when someone is added to the list.", 20, y - 16)
 	local flash = MakeCheck(f, "flash", "Flash the taskbar when alt-tabbed", "Needs the UnitXP SP3 client mod.", 20, y - 38)
@@ -422,20 +425,13 @@ local function CreateOptionsFrame()
 	trig:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 	local modsHeader = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	modsHeader:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 22, 40)
+	modsHeader:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 22, 34)
 	modsHeader:SetText("Client mods")
 	local mods = f:CreateFontString("LockPortModsText", "OVERLAY", "GameFontHighlightSmall")
 	mods:SetPoint("TOPLEFT", modsHeader, "BOTTOMLEFT", 0, -4)
 	mods:SetWidth(300)
 	mods:SetJustifyH("LEFT")
 	f.mods = mods
-
-	local okay = CreateFrame("Button", "LockPortOptionsOkay", f, "UIPanelButtonTemplate")
-	okay:SetWidth(80)
-	okay:SetHeight(22)
-	okay:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -16, 14)
-	okay:SetText(OKAY or "Okay")
-	okay:SetScript("OnClick", function() LockPortOptionsFrame:Hide() end)
 
 	f.flash = flash
 	return f
