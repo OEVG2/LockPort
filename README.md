@@ -53,12 +53,27 @@ Classic dialog style built from stock Blizzard art: class icons, class-coloured 
 - **Add Target**: put your current target on the list
 - Drag to move (position is saved), or lock it in Options.
 - Key bindings: *Key Bindings → LockPort*
+- **Window style** (Options or `/lockport style`): *Classic* (Blizzard dialog) or *pfUI* (flat and dark like the original LockPort, with its pink "LockPort" title; uses pfUI's own skin and font when pfUI is installed). Needs a /reload.
+
+## Auto mode (beta)
+
+Click **Auto** (or `/lockport auto`, or bind a key) and LockPort keeps summoning the list by itself:
+
+- It only casts when you're out of combat, have Soul Shards and 2 helpers are near you. Otherwise it waits and shows why in the window, e.g. `Auto: waiting for helpers (1/2)`.
+- It quietly skips anyone who can't be summoned yet (offline, dead, in combat, inside an instance) and picks them up once they can be.
+- Failed casts back off (5 s, 10 s... up to 30 s). After 3 failures in a row a player is skipped for a minute, and the group is told once.
+- With several warlocks on auto, each claims the player it's summoning so they don't double up.
+- It posts `[LockPort] Summons are open - type 123 to get summoned. (2 in line)` to the raid when started and then every 3 minutes, using your first request word. The interval is set in Options (0 = only when Auto starts). It skips while you're in combat, and with several warlocks on Auto only one posts each round.
+- It turns itself off when you leave the group, and is always off after a login or /reload.
+
+Note: casting without a key press may count as automation under your server's rules. Check with your GMs before using it.
 
 ## Commands
 
 ```
 /lockport                 show / hide the window
 /lockport next            summon the next person in line
+/lockport auto            start / stop auto mode
 /lockport add [name]      add a name (or your target)
 /lockport remove <name>   remove a name      /lockport clear   clear the list
 /lockport show            print the list
@@ -66,6 +81,7 @@ Classic dialog style built from stock Blizzard art: class icons, class-coloured 
 /lockport message <text>  custom /say message, tokens {name} {zone} {shards}  ("message clear" resets)
 /lockport zone | whisper | shards | sound | announce | status | flash | autoremove | lock    toggles
 /lockport mods            which client mods are in use
+/lockport style           switch window style (Classic / pfUI)
 /lockport reset           reset window position
 ```
 

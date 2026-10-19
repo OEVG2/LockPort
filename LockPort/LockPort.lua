@@ -45,10 +45,13 @@ local DEFAULTS = {
 	announceFail  = true,   -- tell the party/raid why a summon failed
 	whisperFail   = true,   -- whisper the target why their summon failed
 	whisperStatus = true,   -- reply to "123" when already here / already on the list
+	autoAnnounce  = true,   -- "summons are open" to the raid while auto mode is on
+	autoAnnounceEvery = "3", -- minutes between repeats (0 = only when auto starts)
 	flash         = true,   -- flash the taskbar on a new request (UnitXP SP3)
 	autoRemove    = true,   -- drop people from the list once they're standing next to you
 	autoShow      = true,   -- pop the window open on a new request
 	locked        = false,  -- lock window position
+	theme         = "classic", -- window style: "classic" or "pfui"
 	triggers      = "123",  -- comma separated request words
 }
 
@@ -425,7 +428,7 @@ end
 ---------------------------------------------------------------------------
 -- Failure reporting
 ---------------------------------------------------------------------------
-function LP:Fail(name, key, rawText, extra)
+function LP:Fail(name, key, rawText, extra, quiet)
 	local O = LockPortOptions
 	local reason = REASONS[key]
 	local groupText, whisperText
@@ -439,6 +442,7 @@ function LP:Fail(name, key, rawText, extra)
 	end
 
 	self:Print("|cffff4040can't summon " .. name .. ":|r " .. groupText)
+	if quiet then return end
 
 	-- don't spam the same failure for the same person
 	local now = GetTime()
@@ -486,18 +490,15 @@ function LP:Summon(name)
 	local unit = info.unit
 
 	-- target-side checks
-	if not UnitIsConnected(unit) then return self:Fail(name, "offline") end
-	if UnitIsDeadOrGhost(unit) then return self:Fail(name, "dead") end
-	if UnitAffectingCombat(unit) then return self:Fail(name, "combat") end
-	local inst = self:InstanceBlock(info)
-	if inst then return self:Fail(name, "instance", nil, inst) end
-	if UnitIsVisible(unit) and self:HasEvilTwin(unit) then
+	local problem, extra = self:TargetProblem(info)
+	if problem == "eviltwin" then
 		self:Fail(name, "eviltwin")
 		return self:RemoveRequest(name, true)
-	end
-	if self:IsNearby(unit) then
+	elseif problem == "here" then
 		self:Print(name .. " is already here - removed from the list.")
 		return self:RemoveRequest(name, true)
+	elseif problem then
+		return self:Fail(name, problem, nil, extra)
 	end
 	-- my side
 	if UnitAffectingCombat("player") then return self:Fail(name, "mecombat") end
@@ -510,9 +511,156 @@ function LP:Summon(name)
 
 	-- The ritual summons the warlock's target, so keep it targeted until the portal completes.
 	self.pending = { name = name, unit = unit, t = GetTime() }
+	self:SendAddon(PREFIX_WHISPER, "summon:" .. name)   -- other auto-mode warlocks skip this player for a bit
 	TargetUnit(unit)
 	CastSpellByName(self.SPELL)
 	self:UpdateUI()
+end
+
+-- Why this player can't be summoned right now: nil, or a REASONS key (+ extra).
+-- "here" means they're already next to me.
+function LP:TargetProblem(info)
+	local u = info.unit
+	if not UnitIsConnected(u) then return "offline" end
+	if UnitIsDeadOrGhost(u) then return "dead" end
+	if UnitAffectingCombat(u) then return "combat" end
+	local inst = self:InstanceBlock(info)
+	if inst then return "instance", inst end
+	if UnitIsVisible(u) and self:HasEvilTwin(u) then return "eviltwin" end
+	if self:IsNearby(u) then return "here" end
+	return nil
+end
+
+---------------------------------------------------------------------------
+-- Auto mode: keeps summoning the list on its own.
+-- Casts only when out of combat, with shards and 2 helpers near you.
+-- People who can't be summoned right now are skipped quietly; repeated
+-- failures back off; another auto-mode warlock's "summon:<name>" claim
+-- makes this one pick someone else. Always off after login / reload.
+---------------------------------------------------------------------------
+function LP:SetAuto(on)
+	if on then
+		if not self:IsWarlock() then return self:Print("only warlocks can summon.") end
+		if not self:KnowsRitual() then return self:Print("you don't know " .. self.SPELL .. " yet.") end
+		if not self:InGroup() then return self:Print("join a party or raid first.") end
+	end
+	self.auto = on and true or nil
+	self.autoSkip, self.autoFails, self.autoStreak = {}, {}, 0
+	self.nextAutoAt = 0
+	self.autoState = on and "starting..." or nil
+	if on then
+		self:Print("|cff40ff40auto mode on|r - summoning the list whenever 2 helpers are near you. Click Auto again to stop.")
+		self.nextAnnounceAt = 0
+		self:AutoAnnounce(GetTime(), true)
+		if LockPortFrame and not LockPortFrame:IsVisible() then LockPortFrame:Show() end
+	else
+		self:Print("auto mode |cffff4040off|r.")
+	end
+	self:UpdateUI()
+end
+
+-- First request word from the options, e.g. "123".
+function LP:TriggerWord()
+	local _, _, w = string.find(LockPortOptions.triggers or "123", "^%s*([^,]+)")
+	w = Trim(w or "")
+	if w == "" then w = "123" end
+	return w
+end
+
+-- "Summons are open" to the party/raid: once when auto starts, then every N minutes.
+-- Skipped while in combat. With several auto-mode warlocks only one posts per round
+-- (an "announce" claim pushes the others' timers back).
+function LP:AutoAnnounce(now, starting)
+	local O = LockPortOptions
+	if not O.autoAnnounce then return end
+	local every = tonumber(O.autoAnnounceEvery) or 3
+	if not starting and every <= 0 then return end
+	if every > 0 and every < 1 then every = 1 end
+	local period = every * 60
+	if not starting and now < (self.nextAnnounceAt or 0) then return end
+	if UnitAffectingCombat("player") then return end
+	local chan = self:GroupChannel()
+	if not chan then return end
+	local claimT = self.claims["announce"]
+	local window = period > 0 and period or 60
+	if claimT and now - claimT < window - 5 then
+		self.nextAnnounceAt = claimT + window
+		return
+	end
+	local n = table.getn(self.requests)
+	local msg = ANNOUNCE_TAG .. "Summons are open - type " .. self:TriggerWord() .. " to get summoned."
+	if n > 0 then msg = msg .. " (" .. n .. " in line)" end
+	SendChatMessage(msg, chan)
+	self:SendAddon(PREFIX_WHISPER, "announce")
+	self.nextAnnounceAt = now + window
+end
+
+function LP:AutoStep(now)
+	if not self:InGroup() then
+		self:Print("left the group - auto mode off.")
+		return self:SetAuto(false)
+	end
+	local p = self.pending
+	if p and not p.done then
+		self.autoState = "summoning " .. p.name
+		return
+	end
+	if now < (self.nextAutoAt or 0) then return end
+	if UnitIsDeadOrGhost("player") then self.autoState = "paused - you're dead"; return end
+	if UnitAffectingCombat("player") then self.autoState = "paused - in combat"; return end
+	if self:CountShards() < 1 then self.autoState = "paused - no Soul Shards"; return end
+
+	self:ScanRoster()
+	local list = self:SortedRequests()
+	if not list[1] then self.autoState = "waiting for requests"; return end
+
+	local pick
+	for _, e in ipairs(list) do
+		local claimT = self.claims["summon:" .. e.name]
+		local claimed = claimT and now - claimT < 20
+		local skipped = self.autoSkip[e.name] and now < self.autoSkip[e.name]
+		if not claimed and not skipped then
+			local problem = self:TargetProblem(e.info)
+			if problem == "here" or problem == "eviltwin" then
+				-- Summon() announces / removes these once
+				self:Summon(e.name)
+				return
+			elseif not problem then
+				pick = e
+				break
+			end
+		end
+	end
+	if not pick then self.autoState = "waiting - nobody ready yet"; return end
+
+	local h = self:CountHelpers(pick.name)
+	if h < 2 then self.autoState = "waiting for helpers (" .. h .. "/2)"; return end
+
+	self.autoState = "summoning " .. pick.name
+	self:Summon(pick.name)
+end
+
+function LP:AutoAfterCast(name, ok, err)
+	local now = GetTime()
+	local stagger = self:ResponderDelay(nil)   -- spreads several auto-mode warlocks apart
+	if ok then
+		self.autoFails[name] = nil
+		self.autoStreak = 0
+		self.nextAutoAt = now + 2 + stagger
+		return
+	end
+	self.autoFails[name] = (self.autoFails[name] or 0) + 1
+	if self.autoFails[name] >= 3 then
+		self.autoFails[name] = nil
+		self.autoSkip[name] = now + 60
+		self:Print(name .. " failed 3 times - auto mode skips them for a minute.")
+		self.lastFailKey = nil
+		self:Fail(name, nil, (err or "the ritual didn't start") .. " (tried 3 times, retrying in a minute)")
+	end
+	self.autoStreak = (self.autoStreak or 0) + 1
+	local wait = 5 * self.autoStreak
+	if wait > 30 then wait = 30 end
+	self.nextAutoAt = now + wait + stagger
 end
 
 -- The ritual really started: announce and take the name off everyone's list.
@@ -566,8 +714,10 @@ function LP:FinishPending()
 		self:AddRequest(p.name, true)
 		self:Fail(p.name, "interrupt")
 	else
-		if p.err then self:Fail(p.name, nil, p.err) else self:Fail(p.name, "nostart") end
+		-- in auto mode retries stay local; the group hears about it once the player is skipped
+		if p.err then self:Fail(p.name, nil, p.err, nil, self.auto) else self:Fail(p.name, "nostart", nil, nil, self.auto) end
 	end
+	if self.auto then self:AutoAfterCast(p.name, p.started and not p.interrupted, p.err) end
 	self:UpdateUI()
 end
 
@@ -608,6 +758,11 @@ function LP:OnUpdate(elapsed)
 	end
 	if table.getn(self.requests) > 0 then
 		self:PruneRequests()
+		self:UpdateUI()
+	end
+	if self.auto then
+		self:AutoAnnounce(now)
+		self:AutoStep(now)
 		self:UpdateUI()
 	end
 end
@@ -799,8 +954,8 @@ function LP:OnEvent(event)
 		elseif arg1 == PREFIX_VERSION then
 			self:OnVersionMessage(arg2)
 		elseif arg1 == PREFIX_WHISPER then
-			-- another LockPort warlock already answered this player
-			self.claims[arg2] = GetTime()
+			-- another LockPort warlock already answered / is summoning this player
+			if arg4 ~= UnitName("player") then self.claims[arg2] = GetTime() end
 		end
 
 	-- cast tracking (works on a plain client) --------------------------------
@@ -932,6 +1087,7 @@ function LP:Slash(msg)
 		local lines = {
 			"|cffffd200/lockport|r - show / hide the window",
 			"|cffffd200/lockport next|r - summon the next person in line",
+			"|cffffd200/lockport auto|r - start / stop automatic summoning",
 			"|cffffd200/lockport add [name]|r - add a name (or your target)",
 			"|cffffd200/lockport remove <name>|r, |cffffd200clear|r - edit the list",
 			"|cffffd200/lockport show|r - print the list",
@@ -939,6 +1095,7 @@ function LP:Slash(msg)
 			"|cffffd200/lockport message <text>|r or |cffffd200message clear|r - custom /say ({name} {zone} {shards})",
 			"|cffffd200/lockport zone, whisper, shards, sound, announce, status, flash, autoremove, lock|r - toggles",
 			"|cffffd200/lockport mods|r - which client mods LockPort is using",
+			"|cffffd200/lockport style|r - switch window style (Classic / pfUI)",
 			"|cffffd200/lockport reset|r - reset the window position",
 		}
 		for _, l in ipairs(lines) do DEFAULT_CHAT_FRAME:AddMessage("  " .. l) end
@@ -966,6 +1123,10 @@ function LP:Slash(msg)
 		O.customMessage = rest ~= ""
 		self:Print("custom /say message " .. (rest ~= "" and ("set: " .. rest) or "cleared."))
 		self:RefreshOptions()
+	elseif cmd == "style" or cmd == "theme" then
+		self:ToggleTheme()
+	elseif cmd == "auto" then
+		self:SetAuto(not self.auto)
 	elseif cmd == "mods" then
 		self:PrintMods()
 	elseif cmd == "reset" then
@@ -1002,6 +1163,7 @@ end
 BINDING_HEADER_LOCKPORT = "LockPort"
 BINDING_NAME_LOCKPORT_SUMMON_NEXT = "Summon next in line"
 BINDING_NAME_LOCKPORT_TOGGLE = "Show / hide window"
+BINDING_NAME_LOCKPORT_AUTO = "Start / stop auto mode"
 
 ---------------------------------------------------------------------------
 -- Boot
