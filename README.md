@@ -52,28 +52,26 @@ Classic dialog style built from stock Blizzard art: class icons, class-coloured 
 - **Summon** button: next in line (warlocks first, then oldest request; skips offline/dead/in-combat/inside an instance)
 - **Add Target**: put your current target on the list
 - Drag to move (position is saved), or lock it in Options.
-- Key bindings: *Key Bindings → LockPort*
 - **Window style** (Options or `/lockport style`): *Classic* (Blizzard dialog) or *pfUI* (flat and dark like the original LockPort, with its pink "LockPort" title; uses pfUI's own skin and font when pfUI is installed). Needs a /reload.
 
-## Auto mode (beta)
+## Summon Next
 
-Click **Auto** (or `/lockport auto`, or bind a key) and LockPort keeps summoning the list by itself:
+The **Summon Next** button (or its hotkey) always picks the right person. It skips anyone who is offline, dead, in combat, inside an instance, being summoned by another LockPort warlock, or who failed 3 times in a row (for a minute).
 
-- It only casts when you're out of combat, have Soul Shards and 2 helpers are near you. Otherwise it waits and shows why in the window, e.g. `Auto: waiting for helpers (1/2)`.
-- It quietly skips anyone who can't be summoned yet (offline, dead, in combat, inside an instance) and picks them up once they can be.
-- Failed casts back off (5 s, 10 s... up to 30 s). After 3 failures in a row a player is skipped for a minute, and the group is told once.
-- With several warlocks on auto, each claims the player it's summoning so they don't double up.
-- It posts `[LockPort] Summons are open - type 123 to get summoned. (2 in line)` to the raid when started and then every 3 minutes, using your first request word. The interval is set in Options (0 = only when Auto starts). It skips while you're in combat, and with several warlocks on Auto only one posts each round.
-- It turns itself off when you leave the group, and is always off after a login or /reload.
+The line under the title tells you whether a summon would work right now, e.g. `Ready: Bob` (green) or `Waiting for helpers (1/2)`, `You're in combat`, `No Soul Shards`. The button text turns green when ready, and LockPort plays the ready-check chime the moment a summon becomes possible (and flashes the taskbar if you have UnitXP SP3). So on raid night you can sit at the stone and press your key each time it chimes.
 
-Note: casting without a key press may count as automation under your server's rules. Check with your GMs before using it.
+**Hotkey:** Options → *Summon Next key*. Click it, press a key or combo, right-click to clear. It's a normal WoW key binding, also under *Key Bindings → LockPort*.
+
+## "Summons are open" announcements
+
+Turn on *Post "summons are open" to the raid every N min* in Options (or `/lockport open`) and LockPort posts `[LockPort] Summons are open - type 123 to get summoned. (2 in line)` on that timer, using your first request word. It's skipped while you're in combat, and with several LockPort warlocks in the raid only one posts each round. Off by default.
 
 ## Commands
 
 ```
 /lockport                 show / hide the window
 /lockport next            summon the next person in line
-/lockport auto            start / stop auto mode
+/lockport open            toggle the "summons are open" raid posts
 /lockport add [name]      add a name (or your target)
 /lockport remove <name>   remove a name      /lockport clear   clear the list
 /lockport show            print the list

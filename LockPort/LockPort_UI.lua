@@ -345,15 +345,18 @@ local function CreateMainFrame()
 
 	-- buttons
 	local summon = CreateFrame("Button", "LockPortSummonButton", f, "UIPanelButtonTemplate")
-	summon:SetWidth(95)
+	summon:SetWidth(192)
 	summon:SetHeight(22)
 	summon:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 16, 40)
-	summon:SetText("Summon")
+	summon:SetText("Summon Next")
 	summon:SetScript("OnClick", function() LP:SummonNext() end)
 	summon:SetScript("OnEnter", function()
 		GameTooltip:SetOwner(this, "ANCHOR_TOP")
 		GameTooltip:AddLine("Summon next in line")
-		GameTooltip:AddLine("Skips anyone offline, dead or in combat.", 1, 1, 1, 1)
+		if LP.readyText then GameTooltip:AddLine(LP.readyText, 1, 0.82, 0) end
+		GameTooltip:AddLine("Skips anyone offline, dead, in combat, inside an instance, being summoned by another warlock, or who failed 3 times in a row.", 1, 1, 1, 1)
+		local key = GetBindingKey("LOCKPORT_SUMMON_NEXT")
+		if key then GameTooltip:AddLine("Hotkey: " .. key, 0.6, 0.6, 0.6) end
 		GameTooltip:Show()
 	end)
 	summon:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -362,34 +365,18 @@ local function CreateMainFrame()
 	local add = CreateFrame("Button", "LockPortAddButton", f, "UIPanelButtonTemplate")
 	add:SetWidth(95)
 	add:SetHeight(22)
-	add:SetPoint("LEFT", summon, "RIGHT", 2, 0)
+	add:SetPoint("TOPLEFT", summon, "BOTTOMLEFT", 0, -2)
 	add:SetText("Add Target")
 	add:SetScript("OnClick", function() LP:Slash("add") end)
-
-	local auto = CreateFrame("Button", "LockPortAutoButton", f, "UIPanelButtonTemplate")
-	auto:SetWidth(95)
-	auto:SetHeight(22)
-	auto:SetPoint("TOPLEFT", summon, "BOTTOMLEFT", 0, -2)
-	auto:SetText("Auto")
-	auto:SetScript("OnClick", function() LP:SetAuto(not LP.auto) end)
-	auto:SetScript("OnEnter", function()
-		GameTooltip:SetOwner(this, "ANCHOR_TOP")
-		GameTooltip:AddLine("Auto mode")
-		GameTooltip:AddLine("Keeps summoning the list by itself whenever you're out of combat, have shards and 2 helpers are near you. Skips anyone who can't be summoned yet.", 1, 1, 1, 1)
-		GameTooltip:AddLine(LP.auto and "Click to stop." or "Click to start.", 0.2, 1, 0.2)
-		GameTooltip:Show()
-	end)
-	auto:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	f.auto = auto
 
 	local opts = CreateFrame("Button", "LockPortOptionsButton", f, "UIPanelButtonTemplate")
 	opts:SetWidth(95)
 	opts:SetHeight(22)
-	opts:SetPoint("LEFT", auto, "RIGHT", 2, 0)
+	opts:SetPoint("LEFT", add, "RIGHT", 2, 0)
 	opts:SetText("Options")
 	opts:SetScript("OnClick", function() LP:ToggleOptions() end)
 
-	SkinButton(summon); SkinButton(add); SkinButton(auto); SkinButton(opts)
+	SkinButton(summon); SkinButton(add); SkinButton(opts)
 	RestorePosition(f)
 	return f
 end
@@ -443,22 +430,22 @@ function LP:RefreshList()
 
 	if self.pending and not self.pending.done then f.summon:Disable() else f.summon:Enable() end
 
-	if self.auto then
-		f.auto:SetText("|cff40ff40Auto: On|r")
-		local state = self.autoState or ""
-		if string.find(state, "^summoning") then
-			f.subtitle:SetTextColor(0.58, 0.51, 0.79)
-		elseif string.find(state, "^paused") or string.find(state, "^waiting for helpers") then
-			f.subtitle:SetTextColor(1, 0.5, 0.1)
-		else
+	-- status line: ready / why not
+	local text = self.readyText
+	if n > 0 and text then
+		if self.isReady then
 			f.subtitle:SetTextColor(0.25, 1, 0.25)
+		elseif string.find(text, "^Summoning") then
+			f.subtitle:SetTextColor(0.58, 0.51, 0.79)
+		else
+			f.subtitle:SetTextColor(1, 0.5, 0.1)
 		end
-		f.subtitle:SetText("Auto: " .. state)
+		f.subtitle:SetText(text .. "  (" .. n .. ")")
 	else
-		f.auto:SetText("Auto")
 		if FLAT then f.subtitle:SetTextColor(0.85, 0.85, 0.85) else f.subtitle:SetTextColor(1, 0.82, 0) end
 		f.subtitle:SetText("Summon requests (" .. n .. ")")
 	end
+	f.summon:SetText(self.isReady and "|cff40ff40Summon Next|r" or "Summon Next")
 
 end
 
@@ -529,7 +516,7 @@ local function MakeInput(parent, name, key, width, x, y)
 end
 
 local function CreateOptionsFrame()
-	local f = MakeDialog("LockPortOptionsFrame", 340, 572, "LockPort Options")
+	local f = MakeDialog("LockPortOptionsFrame", 340, 590, "LockPort Options")
 	f:SetFrameStrata("DIALOG")
 	f:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
 	f:SetScript("OnDragStart", function() this:StartMoving() end)
@@ -554,28 +541,28 @@ local function CreateOptionsFrame()
 	MakeCheck(f, "announceFail", "Tell the party/raid why a summon failed", "e.g. \"[LockPort] Can't summon Bob: Bob is in combat.\"", 20, y - 16)
 	MakeCheck(f, "whisperFail", "Whisper the player why it failed", "Lets them know they're still on the list and what to fix.", 20, y - 38)
 	MakeCheck(f, "whisperStatus", "Answer repeat 123s with a status whisper", "If someone types 123 while already here, or again while waiting, they're told why: already here, place in line, waiting on helpers, summoning someone else, etc. Only one LockPort warlock replies.", 20, y - 60)
-	MakeCheck(f, "autoAnnounce", "Announce summons to the raid while Auto is on", "Posts \"[LockPort] Summons are open - type 123 to get summoned.\" when Auto starts and then on a timer. Skipped while you're in combat; with several warlocks on Auto only one posts.", 20, y - 82)
-	local everyLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	everyLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 48, y - 110)
-	everyLabel:SetText("Repeat every")
-	local every = MakeInput(f, "LockPortAnnounceEveryBox", "autoAnnounceEvery", 30, 120, y - 105)
-	every:SetMaxLetters(3)
-	local everyHint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	MakeCheck(f, "announceOpen", "Post \"summons are open\" to the raid every", "Posts \"[LockPort] Summons are open - type 123 to get summoned. (N in line)\" on a timer while you're in a group. Skipped while you're in combat; with several LockPort warlocks only one posts each round.", 20, y - 82)
+	local every = MakeInput(f, "LockPortAnnounceEveryBox", "announceOpenEvery", 26, 262, y - 84)
+	every:SetMaxLetters(2)
+	local everyHint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	everyHint:SetPoint("LEFT", every, "RIGHT", 6, 0)
-	everyHint:SetText("min  (0 = only when Auto starts)")
+	everyHint:SetText("min")
+	Font(everyHint, 11)
 
-	y = -308
+	y = -284
 	MakeSection(f, "Requests", y)
 	MakeCheck(f, "sound", "Play a sound on new requests", "Plays a short sound when someone is added to the list.", 20, y - 16)
-	local flash = MakeCheck(f, "flash", "Flash the taskbar when alt-tabbed", "Needs the UnitXP SP3 client mod.", 20, y - 38)
-	MakeCheck(f, "autoShow", "Open this window on new requests", "Pops the LockPort window up when someone asks for a summon.", 20, y - 60)
-	MakeCheck(f, "autoRemove", "Remove players once they arrive", "Takes people off everyone's list when they're already standing near you.", 20, y - 82)
-	MakeCheck(f, "locked", "Lock window position", "Stops the summon window from being dragged.", 20, y - 104)
+	MakeCheck(f, "readySound", "Chime when a summon is ready", "Plays the ready-check sound when the next player can be summoned: you're out of combat with shards and 2 helpers are near you.", 20, y - 38)
+	local flash = MakeCheck(f, "flash", "Flash the taskbar when alt-tabbed", "Flashes on new requests and when a summon is ready. Needs the UnitXP SP3 client mod.", 20, y - 60)
+	MakeCheck(f, "autoShow", "Open this window on new requests", "Pops the LockPort window up when someone asks for a summon.", 20, y - 82)
+	MakeCheck(f, "autoRemove", "Remove players once they arrive", "Takes people off everyone's list when they're already standing near you.", 20, y - 104)
+	MakeCheck(f, "locked", "Lock window position", "Stops the summon window from being dragged.", 20, y - 126)
 
 	local trigLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	trigLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 24, y - 136)
+	trigLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 24, y - 158)
 	trigLabel:SetText("Request words:")
-	local trig = MakeInput(f, "LockPortTriggerBox", "triggers", 170, 124, y - 131)
+	Font(trigLabel, 11)
+	local trig = MakeInput(f, "LockPortTriggerBox", "triggers", 170, 124, y - 153)
 	trig:SetScript("OnEnter", function()
 		GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
 		GameTooltip:AddLine("Request words")
@@ -584,8 +571,39 @@ local function CreateOptionsFrame()
 	end)
 	trig:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+	-- Summon Next hotkey: click, then press a key (right-click clears)
+	local keyLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	keyLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 24, y - 186)
+	keyLabel:SetText("Summon Next key:")
+	Font(keyLabel, 11)
+	local bind = CreateFrame("Button", "LockPortBindButton", f, "UIPanelButtonTemplate")
+	bind:SetWidth(120)
+	bind:SetHeight(20)
+	bind:SetPoint("LEFT", keyLabel, "RIGHT", 10, 0)
+	bind:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	bind:SetScript("OnClick", function()
+		if arg1 == "RightButton" then
+			LP:ClearSummonKey()
+		else
+			this.waiting = true
+			this:EnableKeyboard(true)
+			this:SetText("Press a key...")
+		end
+	end)
+	bind:SetScript("OnKeyDown", function() LP:CaptureSummonKey(this, arg1) end)
+	bind:SetScript("OnHide", function() LP:StopKeyCapture(this) end)
+	bind:SetScript("OnEnter", function()
+		GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Summon Next hotkey")
+		GameTooltip:AddLine("Click, then press the key (Shift/Ctrl/Alt combos work). Esc cancels, right-click clears it. Same as Key Bindings > LockPort.", 1, 1, 1, 1)
+		GameTooltip:Show()
+	end)
+	bind:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	SkinButton(bind)
+	f.bind = bind
+
 	local styleLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	styleLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 24, y - 170)
+	styleLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 24, y - 212)
 	styleLabel:SetText("Window style:")
 	Font(styleLabel, 11)
 	local style = CreateFrame("Button", "LockPortStyleButton", f, "UIPanelButtonTemplate")
@@ -622,7 +640,8 @@ function LP:RefreshOptionsUI()
 	if not O or not f then return end
 	for key, cb in pairs(checks) do cb:SetChecked(O[key] and 1 or nil) end
 	if not LockPortMessageBox.focused then LockPortMessageBox:SetText(O.message or "") end
-	if not LockPortAnnounceEveryBox.focused then LockPortAnnounceEveryBox:SetText(O.autoAnnounceEvery or "3") end
+	if not LockPortAnnounceEveryBox.focused then LockPortAnnounceEveryBox:SetText(O.announceOpenEvery or "3") end
+	if not f.bind.waiting then f.bind:SetText(GetBindingKey("LOCKPORT_SUMMON_NEXT") or "Not bound") end
 	if not LockPortTriggerBox.focused then LockPortTriggerBox:SetText(O.triggers or "123") end
 	if self.mods.unitxp then
 		f.flash:Enable()
@@ -633,6 +652,49 @@ function LP:RefreshOptionsUI()
 	end
 	f.mods:SetText(self:ModStatusText())
 	f.style:SetText(O.theme == "pfui" and "pfUI" or "Classic")
+end
+
+---------------------------------------------------------------------------
+-- Summon Next hotkey (stored as a normal WoW key binding)
+---------------------------------------------------------------------------
+local MODIFIER_KEYS = { LSHIFT = 1, RSHIFT = 1, LCTRL = 1, RCTRL = 1, LALT = 1, RALT = 1, UNKNOWN = 1 }
+
+local function SaveKeyBindings()
+	if GetCurrentBindingSet then SaveBindings(GetCurrentBindingSet()) else SaveBindings(1) end
+end
+
+function LP:StopKeyCapture(b)
+	b.waiting = false
+	b:EnableKeyboard(false)
+	self:RefreshOptionsUI()
+end
+
+function LP:ClearSummonKey()
+	local k1, k2 = GetBindingKey("LOCKPORT_SUMMON_NEXT")
+	if k1 then SetBinding(k1) end
+	if k2 then SetBinding(k2) end
+	SaveKeyBindings()
+	self:Print("Summon Next key cleared.")
+	self:RefreshOptionsUI()
+end
+
+function LP:CaptureSummonKey(b, key)
+	if not b.waiting or not key or MODIFIER_KEYS[key] then return end
+	if key == "ESCAPE" then return self:StopKeyCapture(b) end
+	local combo = (IsAltKeyDown() and "ALT-" or "") .. (IsControlKeyDown() and "CTRL-" or "") ..
+	              (IsShiftKeyDown() and "SHIFT-" or "") .. key
+	local old = GetBindingAction(combo)
+	local k1, k2 = GetBindingKey("LOCKPORT_SUMMON_NEXT")
+	if k1 then SetBinding(k1) end
+	if k2 then SetBinding(k2) end
+	SetBinding(combo, "LOCKPORT_SUMMON_NEXT")
+	SaveKeyBindings()
+	if old and old ~= "" and old ~= "LOCKPORT_SUMMON_NEXT" then
+		self:Print(combo .. " was bound to " .. old .. " - it now summons the next player.")
+	else
+		self:Print("Summon Next is now on " .. combo .. ".")
+	end
+	self:StopKeyCapture(b)
 end
 
 function LP:CreateUI()

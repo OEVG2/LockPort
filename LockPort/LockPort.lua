@@ -45,8 +45,9 @@ local DEFAULTS = {
 	announceFail  = true,   -- tell the party/raid why a summon failed
 	whisperFail   = true,   -- whisper the target why their summon failed
 	whisperStatus = true,   -- reply to "123" when already here / already on the list
-	autoAnnounce  = true,   -- "summons are open" to the raid while auto mode is on
-	autoAnnounceEvery = "3", -- minutes between repeats (0 = only when auto starts)
+	announceOpen  = false,  -- post "summons are open - type 123" every few minutes
+	announceOpenEvery = "3", -- minutes between those posts
+	readySound    = true,   -- chime when a summon becomes possible
 	flash         = true,   -- flash the taskbar on a new request (UnitXP SP3)
 	autoRemove    = true,   -- drop people from the list once they're standing next to you
 	autoShow      = true,   -- pop the window open on a new request
@@ -463,16 +464,13 @@ end
 -- Summoning
 ---------------------------------------------------------------------------
 function LP:SummonNext()
-	self:ScanRoster()
-	local list = self:SortedRequests()
-	for _, e in ipairs(list) do
-		local u = e.info.unit
-		if UnitIsConnected(u) and not UnitIsDeadOrGhost(u) and not UnitAffectingCombat(u) and not self:InstanceBlock(e.info) then
-			return self:Summon(e.name)
-		end
+	local e = self:NextCandidate()
+	if e then return self:Summon(e.name) end
+	if self.requests[1] then
+		self:Print("nobody on the list can be summoned right now (offline, dead, in combat, in an instance, or being summoned by another warlock).")
+	else
+		self:Print("nobody is waiting for a summon.")
 	end
-	if list[1] then return self:Summon(list[1].name) end
-	self:Print("nobody is waiting for a summon.")
 end
 
 function LP:Summon(name)
@@ -511,7 +509,7 @@ function LP:Summon(name)
 
 	-- The ritual summons the warlock's target, so keep it targeted until the portal completes.
 	self.pending = { name = name, unit = unit, t = GetTime() }
-	self:SendAddon(PREFIX_WHISPER, "summon:" .. name)   -- other auto-mode warlocks skip this player for a bit
+	self:SendAddon(PREFIX_WHISPER, "summon:" .. name)   -- other warlocks' Summon Next skips this player for a bit
 	TargetUnit(unit)
 	CastSpellByName(self.SPELL)
 	self:UpdateUI()
@@ -532,34 +530,74 @@ function LP:TargetProblem(info)
 end
 
 ---------------------------------------------------------------------------
--- Auto mode: keeps summoning the list on its own.
--- Casts only when out of combat, with shards and 2 helpers near you.
--- People who can't be summoned right now are skipped quietly; repeated
--- failures back off; another auto-mode warlock's "summon:<name>" claim
--- makes this one pick someone else. Always off after login / reload.
+-- Picking who's next. Summon Next skips anyone who can't be summoned right
+-- now, anyone another warlock just started summoning ("summon:<name>" claim),
+-- and anyone who failed 3 times in a row (for a minute).
 ---------------------------------------------------------------------------
-function LP:SetAuto(on)
-	if on then
-		if not self:IsWarlock() then return self:Print("only warlocks can summon.") end
-		if not self:KnowsRitual() then return self:Print("you don't know " .. self.SPELL .. " yet.") end
-		if not self:InGroup() then return self:Print("join a party or raid first.") end
+LP.failCount = {}
+LP.skipUntil = {}
+
+function LP:NoteResult(name, ok)
+	if ok then
+		self.failCount[name] = nil
+		self.skipUntil[name] = nil
+		return
 	end
-	self.auto = on and true or nil
-	self.autoSkip, self.autoFails, self.autoStreak = {}, {}, 0
-	self.nextAutoAt = 0
-	self.autoState = on and "starting..." or nil
-	if on then
-		self:Print("|cff40ff40auto mode on|r - summoning the list whenever 2 helpers are near you. Click Auto again to stop.")
-		self.nextAnnounceAt = 0
-		self:AutoAnnounce(GetTime(), true)
-		if LockPortFrame and not LockPortFrame:IsVisible() then LockPortFrame:Show() end
-	else
-		self:Print("auto mode |cffff4040off|r.")
+	self.failCount[name] = (self.failCount[name] or 0) + 1
+	if self.failCount[name] >= 3 then
+		self.failCount[name] = nil
+		self.skipUntil[name] = GetTime() + 60
+		self:Print(name .. " failed 3 times in a row - Summon Next skips them for a minute.")
 	end
-	self:UpdateUI()
 end
 
--- First request word from the options, e.g. "123".
+-- First player who can be summoned right now (or nil).
+function LP:NextCandidate()
+	local now = GetTime()
+	self:ScanRoster()
+	for _, e in ipairs(self:SortedRequests()) do
+		local claimT = self.claims["summon:" .. e.name]
+		local claimed = claimT and now - claimT < 20
+		local skipped = self.skipUntil[e.name] and now < self.skipUntil[e.name]
+		if not claimed and not skipped and not self:TargetProblem(e.info) then
+			return e
+		end
+	end
+	return nil
+end
+
+-- What the Summon button would do right now: ready (bool), text for the window.
+function LP:ReadyState()
+	local p = self.pending
+	if p and not p.done then return false, "Summoning " .. p.name .. "..." end
+	if not self.requests[1] then return false, nil end
+	if UnitIsDeadOrGhost("player") then return false, "You're dead" end
+	if UnitAffectingCombat("player") then return false, "You're in combat" end
+	if self:CountShards() < 1 then return false, "No Soul Shards" end
+	local e = self:NextCandidate()
+	if not e then return false, "Nobody can be summoned yet" end
+	local h = self:CountHelpers(e.name)
+	if h < 2 then return false, "Waiting for helpers (" .. h .. "/2)" end
+	return true, "Ready: " .. e.name
+end
+
+-- Chime (and flash the taskbar) when a summon becomes possible.
+function LP:CheckReady()
+	local ready, text = self:ReadyState()
+	self.readyText = text
+	if ready and not self.wasReady and self:IsWarlock() then
+		local O = LockPortOptions
+		if O.readySound then PlaySound("ReadyCheck") end
+		if O.flash and self.mods.unitxp then pcall(UnitXP, "notify", "taskbarIcon") end
+	end
+	self.wasReady = ready
+	self.isReady = ready
+end
+
+---------------------------------------------------------------------------
+-- "Summons are open - type 123" to the party/raid every N minutes (option).
+-- Skipped in combat; with several LockPort warlocks only one posts per round.
+---------------------------------------------------------------------------
 function LP:TriggerWord()
 	local _, _, w = string.find(LockPortOptions.triggers or "123", "^%s*([^,]+)")
 	w = Trim(w or "")
@@ -567,24 +605,20 @@ function LP:TriggerWord()
 	return w
 end
 
--- "Summons are open" to the party/raid: once when auto starts, then every N minutes.
--- Skipped while in combat. With several auto-mode warlocks only one posts per round
--- (an "announce" claim pushes the others' timers back).
-function LP:AutoAnnounce(now, starting)
+function LP:OpenAnnounce(now, force)
 	local O = LockPortOptions
-	if not O.autoAnnounce then return end
-	local every = tonumber(O.autoAnnounceEvery) or 3
-	if not starting and every <= 0 then return end
-	if every > 0 and every < 1 then every = 1 end
-	local period = every * 60
-	if not starting and now < (self.nextAnnounceAt or 0) then return end
-	if UnitAffectingCombat("player") then return end
+	if not O.announceOpen and not force then return end
+	if not self:IsWarlock() then return end
 	local chan = self:GroupChannel()
 	if not chan then return end
+	local every = tonumber(O.announceOpenEvery) or 3
+	if every < 1 then every = 1 end
+	local period = every * 60
+	if not force and now < (self.nextAnnounceAt or 0) then return end
+	if UnitAffectingCombat("player") then return end
 	local claimT = self.claims["announce"]
-	local window = period > 0 and period or 60
-	if claimT and now - claimT < window - 5 then
-		self.nextAnnounceAt = claimT + window
+	if not force and claimT and now - claimT < period - 5 then
+		self.nextAnnounceAt = claimT + period
 		return
 	end
 	local n = table.getn(self.requests)
@@ -592,75 +626,7 @@ function LP:AutoAnnounce(now, starting)
 	if n > 0 then msg = msg .. " (" .. n .. " in line)" end
 	SendChatMessage(msg, chan)
 	self:SendAddon(PREFIX_WHISPER, "announce")
-	self.nextAnnounceAt = now + window
-end
-
-function LP:AutoStep(now)
-	if not self:InGroup() then
-		self:Print("left the group - auto mode off.")
-		return self:SetAuto(false)
-	end
-	local p = self.pending
-	if p and not p.done then
-		self.autoState = "summoning " .. p.name
-		return
-	end
-	if now < (self.nextAutoAt or 0) then return end
-	if UnitIsDeadOrGhost("player") then self.autoState = "paused - you're dead"; return end
-	if UnitAffectingCombat("player") then self.autoState = "paused - in combat"; return end
-	if self:CountShards() < 1 then self.autoState = "paused - no Soul Shards"; return end
-
-	self:ScanRoster()
-	local list = self:SortedRequests()
-	if not list[1] then self.autoState = "waiting for requests"; return end
-
-	local pick
-	for _, e in ipairs(list) do
-		local claimT = self.claims["summon:" .. e.name]
-		local claimed = claimT and now - claimT < 20
-		local skipped = self.autoSkip[e.name] and now < self.autoSkip[e.name]
-		if not claimed and not skipped then
-			local problem = self:TargetProblem(e.info)
-			if problem == "here" or problem == "eviltwin" then
-				-- Summon() announces / removes these once
-				self:Summon(e.name)
-				return
-			elseif not problem then
-				pick = e
-				break
-			end
-		end
-	end
-	if not pick then self.autoState = "waiting - nobody ready yet"; return end
-
-	local h = self:CountHelpers(pick.name)
-	if h < 2 then self.autoState = "waiting for helpers (" .. h .. "/2)"; return end
-
-	self.autoState = "summoning " .. pick.name
-	self:Summon(pick.name)
-end
-
-function LP:AutoAfterCast(name, ok, err)
-	local now = GetTime()
-	local stagger = self:ResponderDelay(nil)   -- spreads several auto-mode warlocks apart
-	if ok then
-		self.autoFails[name] = nil
-		self.autoStreak = 0
-		self.nextAutoAt = now + 2 + stagger
-		return
-	end
-	self.autoFails[name] = (self.autoFails[name] or 0) + 1
-	if self.autoFails[name] >= 3 then
-		self.autoFails[name] = nil
-		self.autoSkip[name] = now + 60
-		self:Print(name .. " failed 3 times - auto mode skips them for a minute.")
-		self.lastFailKey = nil
-		self:Fail(name, nil, (err or "the ritual didn't start") .. " (tried 3 times, retrying in a minute)")
-	end
-	self.autoStreak = (self.autoStreak or 0) + 1
-	local wait = 5 * self.autoStreak
-	if wait > 30 then wait = 30 end
-	self.nextAutoAt = now + wait + stagger
+	self.nextAnnounceAt = now + period
 end
 
 -- The ritual really started: announce and take the name off everyone's list.
@@ -714,10 +680,9 @@ function LP:FinishPending()
 		self:AddRequest(p.name, true)
 		self:Fail(p.name, "interrupt")
 	else
-		-- in auto mode retries stay local; the group hears about it once the player is skipped
-		if p.err then self:Fail(p.name, nil, p.err, nil, self.auto) else self:Fail(p.name, "nostart", nil, nil, self.auto) end
+		if p.err then self:Fail(p.name, nil, p.err) else self:Fail(p.name, "nostart") end
 	end
-	if self.auto then self:AutoAfterCast(p.name, p.started and not p.interrupted, p.err) end
+	self:NoteResult(p.name, p.started and not p.interrupted)
 	self:UpdateUI()
 end
 
@@ -758,13 +723,10 @@ function LP:OnUpdate(elapsed)
 	end
 	if table.getn(self.requests) > 0 then
 		self:PruneRequests()
-		self:UpdateUI()
 	end
-	if self.auto then
-		self:AutoAnnounce(now)
-		self:AutoStep(now)
-		self:UpdateUI()
-	end
+	self:OpenAnnounce(now)
+	self:CheckReady()
+	self:UpdateUI()
 end
 
 ---------------------------------------------------------------------------
@@ -1087,7 +1049,7 @@ function LP:Slash(msg)
 		local lines = {
 			"|cffffd200/lockport|r - show / hide the window",
 			"|cffffd200/lockport next|r - summon the next person in line",
-			"|cffffd200/lockport auto|r - start / stop automatic summoning",
+			"|cffffd200/lockport open|r - toggle the \"summons are open\" raid posts",
 			"|cffffd200/lockport add [name]|r - add a name (or your target)",
 			"|cffffd200/lockport remove <name>|r, |cffffd200clear|r - edit the list",
 			"|cffffd200/lockport show|r - print the list",
@@ -1125,8 +1087,11 @@ function LP:Slash(msg)
 		self:RefreshOptions()
 	elseif cmd == "style" or cmd == "theme" then
 		self:ToggleTheme()
-	elseif cmd == "auto" then
-		self:SetAuto(not self.auto)
+	elseif cmd == "open" then
+		O.announceOpen = not O.announceOpen
+		self:Print("\"summons are open\" announcements: " .. OnOff(O.announceOpen))
+		if O.announceOpen then self:OpenAnnounce(GetTime(), true) end
+		self:RefreshOptions()
 	elseif cmd == "mods" then
 		self:PrintMods()
 	elseif cmd == "reset" then
@@ -1163,7 +1128,6 @@ end
 BINDING_HEADER_LOCKPORT = "LockPort"
 BINDING_NAME_LOCKPORT_SUMMON_NEXT = "Summon next in line"
 BINDING_NAME_LOCKPORT_TOGGLE = "Show / hide window"
-BINDING_NAME_LOCKPORT_AUTO = "Start / stop auto mode"
 
 ---------------------------------------------------------------------------
 -- Boot
