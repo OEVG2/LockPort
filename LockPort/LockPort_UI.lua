@@ -516,7 +516,7 @@ local function MakeInput(parent, name, key, width, x, y)
 end
 
 local function CreateOptionsFrame()
-	local f = MakeDialog("LockPortOptionsFrame", 340, 590, "LockPort Options")
+	local f = MakeDialog("LockPortOptionsFrame", 340, 612, "LockPort Options")
 	f:SetFrameStrata("DIALOG")
 	f:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
 	f:SetScript("OnDragStart", function() this:StartMoving() end)
@@ -548,8 +548,9 @@ local function CreateOptionsFrame()
 	everyHint:SetPoint("LEFT", every, "RIGHT", 6, 0)
 	everyHint:SetText("min")
 	Font(everyHint, 11)
+	MakeCheck(f, "askHelpers", "Ask the raid for helpers when fewer than 2 are near", "Posts e.g. \"[LockPort] Need 1 more person at Blackrock Mountain to help summon - 3 players waiting.\" when someone is waiting (or your portal is up) and fewer than 2 group members are near you. At most every 2 minutes, not in combat, and only one LockPort warlock posts.", 20, y - 104)
 
-	y = -284
+	y = -306
 	MakeSection(f, "Requests", y)
 	MakeCheck(f, "sound", "Play a sound on new requests", "Plays a short sound when someone is added to the list.", 20, y - 16)
 	MakeCheck(f, "readySound", "Chime when a summon is ready", "Plays the ready-check sound when the next player can be summoned: you're out of combat with shards and 2 helpers are near you.", 20, y - 38)

@@ -62,6 +62,15 @@ The line under the title tells you whether a summon would work right now, e.g. `
 
 **Hotkey:** Options → *Summon Next key*. Click it, press a key or combo, right-click to clear. It's a normal WoW key binding, also under *Key Bindings → LockPort*.
 
+## Asking for helpers
+
+If someone is waiting (or your portal is up) and fewer than 2 group members are near you, LockPort asks the raid for help after about 8 seconds:
+
+- `[LockPort] Need 1 more person at Blackrock Mountain to help summon - 3 players waiting.`
+- `[LockPort] Need 2 more people at Blackrock Mountain to click the summoning portal for Bob!`
+
+At most every 2 minutes, never while you're in combat, and only one LockPort warlock posts. On by default; toggle in Options or with `/lockport helpers`.
+
 ## "Summons are open" announcements
 
 Turn on *Post "summons are open" to the raid every N min* in Options (or `/lockport open`) and LockPort posts `[LockPort] Summons are open - type 123 to get summoned. (2 in line)` on that timer, using your first request word. It's skipped while you're in combat, and with several LockPort warlocks in the raid only one posts each round. Off by default.
@@ -77,7 +86,7 @@ Turn on *Post "summons are open" to the raid every N min* in Options (or `/lockp
 /lockport show            print the list
 /lockport options         options window
 /lockport message <text>  custom /say message, tokens {name} {zone} {shards}  ("message clear" resets)
-/lockport zone | whisper | shards | sound | announce | status | flash | autoremove | lock    toggles
+/lockport zone | whisper | shards | sound | announce | status | helpers | flash | autoremove | lock    toggles
 /lockport mods            which client mods are in use
 /lockport style           switch window style (Classic / pfUI)
 /lockport reset           reset window position

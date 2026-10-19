@@ -48,6 +48,7 @@ local DEFAULTS = {
 	announceOpen  = false,  -- post "summons are open - type 123" every few minutes
 	announceOpenEvery = "3", -- minutes between those posts
 	readySound    = true,   -- chime when a summon becomes possible
+	askHelpers    = true,   -- ask the raid for portal clickers when fewer than 2 are near
 	flash         = true,   -- flash the taskbar on a new request (UnitXP SP3)
 	autoRemove    = true,   -- drop people from the list once they're standing next to you
 	autoShow      = true,   -- pop the window open on a new request
@@ -592,6 +593,67 @@ function LP:CheckReady()
 end
 
 ---------------------------------------------------------------------------
+-- Not enough helpers: ask the group to come click the portal.
+-- Fires when someone is waiting (or a ritual is up) and fewer than 2 group
+-- members are near you for ~8 s. At most every 2 min, never in combat, and
+-- only one LockPort warlock posts (a "help" claim resets the others' timers).
+---------------------------------------------------------------------------
+function LP:WhereText()
+	local where = GetZoneText() or ""
+	local sub = GetSubZoneText()
+	if sub and sub ~= "" and sub ~= where then where = where .. " - " .. sub end
+	return where
+end
+
+function LP:HelperCall(now)
+	local O = LockPortOptions
+	if not O.askHelpers or not self:IsWarlock() then self.helpShortSince = nil; return end
+	local chan = self:GroupChannel()
+	if not chan then self.helpShortSince = nil; return end
+
+	local p = self.pending
+	local channelling = p and not p.done and p.started
+	local forName
+	if channelling then
+		forName = p.name
+	else
+		if UnitIsDeadOrGhost("player") or UnitAffectingCombat("player") or self:CountShards() < 1 then
+			self.helpShortSince = nil
+			return
+		end
+		local e = self:NextCandidate()
+		if not e then self.helpShortSince = nil; return end
+		forName = e.name
+	end
+
+	local h = self:CountHelpers(forName)
+	if h >= 2 then self.helpShortSince = nil; return end
+	self.helpShortSince = self.helpShortSince or now
+	if now - self.helpShortSince < 8 then return end
+	if UnitAffectingCombat("player") then return end
+	if now < (self.nextHelpAt or 0) then return end
+	local claimT = self.claims["help"]
+	if claimT and now - claimT < 115 then
+		self.nextHelpAt = claimT + 120
+		return
+	end
+
+	local need = 2 - h
+	local who = (need == 1) and "1 more person" or (need .. " more people")
+	local msg
+	if channelling then
+		msg = ANNOUNCE_TAG .. "Need " .. who .. " at " .. self:WhereText() .. " to click the summoning portal for " .. forName .. "!"
+	else
+		local waiting = table.getn(self.requests)
+		msg = ANNOUNCE_TAG .. "Need " .. who .. " at " .. self:WhereText() .. " to help summon - " ..
+		      waiting .. (waiting == 1 and " player" or " players") .. " waiting."
+	end
+	SendChatMessage(msg, chan)
+	self:SendAddon(PREFIX_WHISPER, "help")
+	self.nextHelpAt = now + 120
+end
+
+---------------------------------------------------------------------------
 -- "Summons are open - type 123" to the party/raid every N minutes (option).
 -- Skipped in combat; with several LockPort warlocks only one posts per round.
 ---------------------------------------------------------------------------
@@ -637,9 +699,7 @@ function LP:OnRitualStarted()
 	local shards = self:CountShards() - 1
 	if shards < 0 then shards = 0 end
 
-	local where = GetZoneText() or ""
-	local sub = GetSubZoneText()
-	if sub and sub ~= "" and sub ~= where then where = where .. " - " .. sub end
+	local where = self:WhereText()
 
 	local msg
 	if O.customMessage and O.message and O.message ~= "" then
@@ -723,6 +783,7 @@ function LP:OnUpdate(elapsed)
 	end
 	self:OpenAnnounce(now)
 	self:CheckReady()
+	self:HelperCall(now)
 	self:UpdateUI()
 end
 
@@ -1030,8 +1091,9 @@ local TOGGLES = {
 	sound = "sound on new request", announce = "announce failures to group",
 	flash = "taskbar flash", autoremove = "auto-remove arrived players", lock = "window lock",
 	status = "status whispers (already here / place in line)",
+	helpers = "ask the raid for portal helpers",
 }
-local TOGGLE_KEYS = { announce = "announceFail", autoremove = "autoRemove", lock = "locked", status = "whisperStatus" }
+local TOGGLE_KEYS = { announce = "announceFail", autoremove = "autoRemove", lock = "locked", status = "whisperStatus", helpers = "askHelpers" }
 
 function LP:Slash(msg)
 	msg = Trim(msg)
@@ -1052,7 +1114,7 @@ function LP:Slash(msg)
 			"|cffffd200/lockport show|r - print the list",
 			"|cffffd200/lockport options|r - open the options window",
 			"|cffffd200/lockport message <text>|r or |cffffd200message clear|r - custom /say ({name} {zone} {shards})",
-			"|cffffd200/lockport zone, whisper, shards, sound, announce, status, flash, autoremove, lock|r - toggles",
+			"|cffffd200/lockport zone, whisper, shards, sound, announce, status, helpers, flash, autoremove, lock|r - toggles",
 			"|cffffd200/lockport mods|r - which client mods LockPort is using",
 			"|cffffd200/lockport style|r - switch window style (Classic / pfUI)",
 			"|cffffd200/lockport reset|r - reset the window position",
