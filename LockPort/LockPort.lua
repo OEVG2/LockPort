@@ -2,7 +2,7 @@
 	LockPort - easy warlock summoning for World of Warcraft 1.12 / Turtle WoW 1.18
 	Originally written by Gurky, maintained by Phaestas.
 	v3: classic UI, failure announcements, optional client-mod support
-	    (SuperWoW, Nampower, UnitXP SP3, ClassicAPI are all optional).
+	    (SuperWoW, Nampower, UnitXP SP3 are all optional).
 
 	Written for the Lua 5.0 runtime of the 1.12 client:
 	no '#', no '%' operator, no select(), no string.match.
@@ -127,15 +127,13 @@ function LP:DetectMods()
 	end
 	-- Nampower: SPELL_FAILED_SELF / SPELL_CAST_EVENT
 	m.nampower = (GetNampowerVersion ~= nil) or (QueueSpellByName ~= nil) or (GetSpellIdForName ~= nil)
-	-- ClassicAPI: modern API backport (C_Timer etc.). Detected for info; LockPort doesn't need it.
-	m.classicapi = (CLASSIC_API_VERSION ~= nil) or (C_Timer ~= nil)
 end
 
 function LP:ModStatusText()
 	local function s(label, on) return label .. ": " .. (on and "|cff40ff40yes|r" or "|cff808080no|r") end
 	local m = self.mods
-	return s("SuperWoW", m.superwow) .. "   " .. s("Nampower", m.nampower) .. "\n" ..
-	       s("UnitXP SP3", m.unitxp) .. "   " .. s("ClassicAPI", m.classicapi)
+	return s("SuperWoW", m.superwow) .. "   " .. s("Nampower", m.nampower) .. "   " ..
+	       s("UnitXP SP3", m.unitxp)
 end
 
 function LP:PrintMods()
@@ -144,7 +142,6 @@ function LP:PrintMods()
 	DEFAULT_CHAT_FRAME:AddMessage("  SuperWoW: " .. OnOff(m.superwow) .. "  |cffaaaaaa- exact cast start/fail tracking for the ritual, Evil Twin by spell id, yard distances|r")
 	DEFAULT_CHAT_FRAME:AddMessage("  Nampower: " .. OnOff(m.nampower) .. "  |cffaaaaaa- server-confirmed spell failure events|r")
 	DEFAULT_CHAT_FRAME:AddMessage("  UnitXP SP3: " .. OnOff(m.unitxp) .. "  |cffaaaaaa- precise distance (\"already here\" check), taskbar flash on new requests|r")
-	DEFAULT_CHAT_FRAME:AddMessage("  ClassicAPI: " .. OnOff(m.classicapi) .. "  |cffaaaaaa- not needed by LockPort|r")
 end
 
 function LP:MyGUID()

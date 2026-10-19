@@ -92,7 +92,6 @@ LockPort works on a plain client. If these mods are present it uses them automat
 | **SuperWoW** | `UNIT_CASTEVENT` matched by your GUID and the Ritual's spell id, so start/fail detection can't be confused by other spells; Evil Twin detected by spell id; yard distances via `UnitPosition` |
 | **UnitXP SP3** | Exact distance for the status column and the "already here" check (instead of the ~28 yd interact check); taskbar flash on new requests while alt-tabbed |
 | **Nampower** | `SPELL_FAILED_SELF` as an extra, server-confirmed failure signal |
-| **ClassicAPI** | Detected, but nothing it adds is needed by LockPort |
 
 Note: the ritual summons your **current target**, so LockPort targets the player for you. Keep them targeted until the portal is clicked.
 
