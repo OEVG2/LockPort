@@ -60,6 +60,7 @@ local REASONS = {
 	eviltwin  = { group = "%s has Evil Twin (must die or walk)", whisper = "you have the Evil Twin debuff. You'll need to die or walk" },
 	mecombat  = { group = "I'm in combat",                    whisper = "I'm in combat. You're still on the list" },
 	noshards  = { group = "I'm out of Soul Shards",           whisper = "I'm out of Soul Shards" },
+	instance  = { group = "%s is inside %s",                  whisper = "you're inside %s - zone out first. You're still on the list" },
 	interrupt = { group = "the ritual was interrupted",       whisper = "the ritual was interrupted. You're still on the list" },
 	nostart   = { group = "the ritual didn't start",          whisper = "the ritual didn't start. You're still on the list" },
 }
@@ -281,6 +282,37 @@ function LP:HasEvilTwin(unit)
 end
 
 ---------------------------------------------------------------------------
+-- Instances: a player inside a dungeon/raid/battleground you're not in can't
+-- be summoned out. Zone names come from the raid roster (raids only; 1.12
+-- doesn't share zones for 5-man parties). English zone names.
+---------------------------------------------------------------------------
+LP.INSTANCES = {}
+for _, z in ipairs({
+	-- dungeons
+	"Ragefire Chasm", "Wailing Caverns", "The Deadmines", "Shadowfang Keep", "Blackfathom Deeps",
+	"The Stockade", "Gnomeregan", "Razorfen Kraul", "Scarlet Monastery", "Razorfen Downs", "Uldaman",
+	"Zul'Farrak", "Maraudon", "The Temple of Atal'Hakkar", "Sunken Temple", "Blackrock Depths",
+	"Blackrock Spire", "Dire Maul", "Stratholme", "Scholomance",
+	-- raids
+	"Molten Core", "Onyxia's Lair", "Blackwing Lair", "Zul'Gurub", "Ruins of Ahn'Qiraj",
+	"Ahn'Qiraj", "Temple of Ahn'Qiraj", "Naxxramas",
+	-- battlegrounds
+	"Warsong Gulch", "Arathi Basin", "Alterac Valley",
+	-- Turtle WoW
+	"Crescent Grove", "Karazhan Crypt", "Stormwind Vault", "Gilneas City", "Hateforge Quarry",
+	"The Black Morass", "Black Morass", "Dragonmaw Retreat", "Stormwrought Ruins",
+	"Emerald Sanctum", "Lower Karazhan Halls", "Upper Karazhan Halls", "Tower of Karazhan",
+}) do LP.INSTANCES[z] = true end
+
+-- Returns the instance name if the player is inside an instance I'm not in.
+function LP:InstanceBlock(info)
+	local z = info and info.zone
+	if not z or z == "" or z == GetRealZoneText() then return nil end
+	if self.INSTANCES[z] then return z end
+	return nil
+end
+
+---------------------------------------------------------------------------
 -- Request list
 ---------------------------------------------------------------------------
 function LP:FindRequest(name)
@@ -384,6 +416,7 @@ function LP:RequestStatus(entry)
 	end
 	if info.zone and info.zone ~= "" then
 		if info.zone == GetRealZoneText() then return "Same zone", 0.85, 0.85, 0.85 end
+		if self:InstanceBlock(info) then return info.zone, 1, 0.5, 0.1 end
 		return info.zone, 0.85, 0.85, 0.85
 	end
 	return "", 1, 1, 1
@@ -392,13 +425,13 @@ end
 ---------------------------------------------------------------------------
 -- Failure reporting
 ---------------------------------------------------------------------------
-function LP:Fail(name, key, rawText)
+function LP:Fail(name, key, rawText, extra)
 	local O = LockPortOptions
 	local reason = REASONS[key]
 	local groupText, whisperText
 	if reason then
-		groupText = string.format(reason.group, name)
-		whisperText = reason.whisper
+		groupText = string.format(reason.group, name, extra or "")
+		whisperText = reason.whisper and string.format(reason.whisper, extra or "")
 	else
 		-- server / client error text, e.g. "Target is in combat", "You must be standing to do that"
 		groupText = rawText or "unknown error"
@@ -430,7 +463,7 @@ function LP:SummonNext()
 	local list = self:SortedRequests()
 	for _, e in ipairs(list) do
 		local u = e.info.unit
-		if UnitIsConnected(u) and not UnitIsDeadOrGhost(u) and not UnitAffectingCombat(u) then
+		if UnitIsConnected(u) and not UnitIsDeadOrGhost(u) and not UnitAffectingCombat(u) and not self:InstanceBlock(e.info) then
 			return self:Summon(e.name)
 		end
 	end
@@ -456,6 +489,8 @@ function LP:Summon(name)
 	if not UnitIsConnected(unit) then return self:Fail(name, "offline") end
 	if UnitIsDeadOrGhost(unit) then return self:Fail(name, "dead") end
 	if UnitAffectingCombat(unit) then return self:Fail(name, "combat") end
+	local inst = self:InstanceBlock(info)
+	if inst then return self:Fail(name, "instance", nil, inst) end
 	if UnitIsVisible(unit) and self:HasEvilTwin(unit) then
 		self:Fail(name, "eviltwin")
 		return self:RemoveRequest(name, true)
@@ -654,6 +689,8 @@ function LP:StatusText(name, info)
 	local line = pos and ("You're #" .. pos .. " in line") or "You're on the list"
 	if UnitIsDeadOrGhost(u) then return line .. ", but you're dead - release or get a res first." end
 	if UnitAffectingCombat(u) then return line .. ", but you're in combat - drop combat first." end
+	local inst = self:InstanceBlock(info)
+	if inst then return line .. ", but you're inside " .. inst .. " - zone out first." end
 	if p and not p.done then return line .. " - I'm summoning " .. p.name .. " right now." end
 	if UnitAffectingCombat("player") then return line .. " - I'm in combat, I'll summon you right after." end
 	if self:CountShards() < 1 then return line .. " - I'm out of Soul Shards." end

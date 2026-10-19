@@ -19,11 +19,14 @@ Originally written by Gurky.
 | Target is offline | Any error the server/client gives for the cast (e.g. *Target is in combat*, *You must be standing to do that*, *Invalid target*) |
 | Target is dead | The ritual was interrupted (player goes back on the list) |
 | Target is in combat | The ritual didn't start |
+| Target is inside an instance you're not in (raids only) | |
 | Target has Evil Twin (removed from list) | |
 | You are in combat | |
 | You are out of Soul Shards | |
 
 Repeated identical failures are throttled (10 s) so the raid isn't spammed.
+
+The instance check uses the zone from the raid roster, so it only works in raids (1.12 doesn't share zones in 5-man parties). Instance names are matched in English; vanilla dungeons, raids, battlegrounds and the Turtle WoW instances are included.
 
 ### Status whispers
 
@@ -35,6 +38,7 @@ When someone types 123 and there's nothing new to do, they get a whisper explain
   - `You're #2 in line - I'm summoning Bob right now.`
   - `You're #1 in line - waiting on helpers: I need 2 people near me to click the portal (0 here).`
   - `You're #3 in line, but you're in combat - drop combat first.`
+  - `You're #1 in line, but you're inside Molten Core - zone out first.`
   - also: dead, I'm in combat, I'm out of Soul Shards, `N ahead of you`, `you're next!`
 - **Typing 123 again right after being summoned:** `I cast your summon 30s ago - accept the prompt if you still see it.` and they're put back on the list in case it expired.
 
@@ -45,7 +49,7 @@ Only one warlock replies even if several run LockPort. The one summoning that pl
 Classic dialog style built from stock Blizzard art: class icons, class-coloured names, and a live status column (`Here`, `In combat`, `Dead`, `Offline`, distance in yards, or zone). The footer shows your Soul Shards and how many helpers are close enough to click the portal.
 
 - **Left-click** a name: summon · **Ctrl+click**: target · **Right-click**: remove
-- **Summon** button: next in line (warlocks first, then oldest request; skips offline/dead/in-combat)
+- **Summon** button: next in line (warlocks first, then oldest request; skips offline/dead/in-combat/inside an instance)
 - **Add Target**: put your current target on the list
 - Drag to move (position is saved), or lock it in Options.
 - Key bindings: *Key Bindings → LockPort*
