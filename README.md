@@ -3,6 +3,38 @@
 Easy warlock summoning for World of Warcraft 1.12 / Turtle WoW 1.18.
 Originally written by Gurky.
 
+Current version: **3.7.4**. Optional companion client mod: **LockPort.dll 1.2.1**.
+
+## Installation
+
+Download this repository and copy its `LockPort` folder into `Interface/AddOns`.
+For manual summoning, the addon alone is sufficient. To use Auto Summon, follow
+[the client mod installation instructions](native/README.md).
+
+## Changes in 3.7.4
+
+- Optional Auto Summon for parties and raids, using LockPort.dll.
+- Completed summons no longer announce a failure solely because the channel ended with an interruption event.
+- Auto Summon waits for two nearby helpers and a ready candidate for two seconds.
+- Auto Summon turns off when leaving the group. Turning it off also disables availability announcements.
+- Both Auto Summon and availability announcements start off after login or `/reload`, including manually enabled announcements.
+- All outgoing chat uses `[LockPort]`, including custom messages and summon whispers.
+- Wider options window, button-style Auto Summon toggle, and ClassicAPI/LockPort detection.
+
+The user confirmed automatic summoning works in-game with DLL 1.2.1 on their OctoWoW client. The addon and native regression suites also pass; native tests use mocked game functions.
+
+## Auto Summon
+
+Install the compatible client mod, join a party or raid on a warlock, and turn on
+**Auto Summon** below Add Target and Options. It also enables availability
+announcements and posts once immediately. Requests are processed automatically
+when the target is eligible, two helpers are nearby, and you have Soul Shards.
+Helpers still need to click the portal, and the target must accept the summon.
+
+ClassicAPI, when present, supplies movement and live cast/channel information.
+The toggle appears only when LockPort.dll 1.2.1 is detected. Use `/lockport debug`
+to inspect recent automatic attempts.
+
 ## How it works
 
 - Be a warlock in a party or raid.
@@ -17,7 +49,7 @@ Originally written by Gurky.
 | Checked before casting | Reported after casting |
 |---|---|
 | Target is offline | Any error the server/client gives for the cast (e.g. *Target is in combat*, *You must be standing to do that*, *Invalid target*) |
-| Target is dead | The ritual was interrupted (player goes back on the list) |
+| Target is dead | Confirmed cast failures; interruption alone is treated as an uncertain result |
 | Target is in combat | The ritual didn't start |
 | Target is inside an instance you're not in (raids only) | |
 | Target has Evil Twin (removed from list) | |
@@ -71,16 +103,16 @@ If someone is waiting (or your portal is up) and fewer than 2 group members are 
 
 At most every 2 minutes, never while you're in combat, and only one LockPort warlock posts. On by default; toggle in Options or with `/lockport helpers`.
 
-## "Summons are open" announcements
+## "Summons are available" announcements
 
-Turn on *Post "summons are open" to the raid every N min* in Options (or `/lockport open`) and LockPort posts `[LockPort] Summons are open - type 123 to get summoned. (2 in line)` on that timer, using your first request word. It's skipped while you're in combat, and with several LockPort warlocks in the raid only one posts each round. Off by default.
+Turn on *Post "summons are available" to the raid every N min* in Options (or `/lockport available`) and LockPort posts `[LockPort] Summons are available - type 123 to get summoned. (2 in line)` on that timer, using your first request word. It's skipped while you're in combat, and with several LockPort warlocks in the raid only one posts each round. Off after login or `/reload`. `/lockport open` remains an alias for `/lockport available`.
 
 ## Commands
 
 ```
 /lockport                 show / hide the window
 /lockport next            summon the next person in line
-/lockport open            toggle the "summons are open" raid posts
+/lockport available            toggle the "summons are available" raid posts
 /lockport add [name]      add a name (or your target)
 /lockport remove <name>   remove a name      /lockport clear   clear the list
 /lockport show            print the list
@@ -100,9 +132,11 @@ LockPort works on a plain client. If these mods are present it uses them automat
 |---|---|
 | **SuperWoW** | `UNIT_CASTEVENT` matched by your GUID and the Ritual's spell id, so start/fail detection can't be confused by other spells; Evil Twin detected by spell id; yard distances via `UnitPosition` |
 | **UnitXP SP3** | Exact distance for the status column and the "already here" check (instead of the ~28 yd interact check); taskbar flash on new requests while alt-tabbed |
+| **LockPort 1.2.1** | Optional native casting support for Auto Summon; install through VanillaFixes |
+| **ClassicAPI** | Movement and live casting/channel information when available |
 | **Nampower** | `SPELL_FAILED_SELF` as an extra, server-confirmed failure signal |
 
-Note: the ritual summons your **current target**, so LockPort targets the player for you. Keep them targeted until the portal is clicked.
+Manual summoning targets the player through the Lua API. Auto Summon passes the group member's GUID directly to the client spellbook function.
 
 ## Compatibility
 

@@ -376,6 +376,27 @@ local function CreateMainFrame()
 	opts:SetText("Options")
 	opts:SetScript("OnClick", function() LP:ToggleOptions() end)
 
+	-- Hidden entirely when the companion client DLL is absent.
+	local auto = CreateFrame("Button", "LockPortRaidAutoSummon", f, "UIPanelButtonTemplate")
+	auto:SetWidth(192)
+	auto:SetHeight(22)
+	auto:SetPoint("TOPLEFT", add, "BOTTOMLEFT", 0, -2)
+	auto:SetText("Auto Summon: Off")
+	auto:SetScript("OnClick", function()
+		LP:SetRaidAutoSummon(not LP.raidAutoSummon)
+		this:SetText(LP.raidAutoSummon and "|cff40ff40Auto Summon: On|r" or "Auto Summon: Off")
+	end)
+	auto:SetScript("OnEnter", function()
+		GameTooltip:SetOwner(this, "ANCHOR_TOP")
+		GameTooltip:AddLine("Auto Summon")
+		GameTooltip:AddLine("Automatically summons queued party or raid members when two helpers are nearby. Enables summons-available announcements. Turns off when you leave the group or reload.", 1, 1, 1, 1)
+		GameTooltip:Show()
+	end)
+	auto:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	auto:Hide()
+	SkinButton(auto)
+	f.raidAuto = auto
+
 	SkinButton(summon); SkinButton(add); SkinButton(opts)
 	RestorePosition(f)
 	return f
@@ -387,6 +408,20 @@ function LP:RefreshList()
 	if not self:IsWarlock() then f:Hide(); return end
 	if not f:IsVisible() then return end
 
+	local native = self:HasNativeMod()
+	local extra = native and 26 or 0
+	f:SetHeight(46 + MAX_ROWS * ROW_HEIGHT + 104 + extra)
+	f.summon:ClearAllPoints()
+	f.summon:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 16, 40 + extra)
+	f.footer:ClearAllPoints()
+	f.footer:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 18, 66 + extra)
+	if native then
+		f.raidAuto:Show()
+		f.raidAuto:SetText(self.raidAutoSummon and "|cff40ff40Auto Summon: On|r" or "Auto Summon: Off")
+		if self:InGroup() then f.raidAuto:Enable() else f.raidAuto:Disable() end
+	else
+		f.raidAuto:Hide()
+	end
 	self:ScanRoster()
 	local list = self:SortedRequests()
 	local n = table.getn(list)
@@ -472,6 +507,7 @@ local function MakeCheck(parent, key, label, tip, x, y)
 	cb.key = key
 	cb.tip = tip
 	cb:SetScript("OnClick", function()
+		if this.key == "announceOpen" and LP.raidAutoSummon then this:SetChecked(1); return end
 		LockPortOptions[this.key] = this:GetChecked() and true or false
 		PlaySound(this:GetChecked() and "igMainMenuOptionCheckBoxOn" or "igMainMenuOptionCheckBoxOff")
 		LP:RefreshList()
@@ -516,7 +552,7 @@ local function MakeInput(parent, name, key, width, x, y)
 end
 
 local function CreateOptionsFrame()
-	local f = MakeDialog("LockPortOptionsFrame", 340, 612, "LockPort Options")
+	local f = MakeDialog("LockPortOptionsFrame", 400, 612, "LockPort Options")
 	f:SetFrameStrata("DIALOG")
 	f:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
 	f:SetScript("OnDragStart", function() this:StartMoving() end)
@@ -531,7 +567,7 @@ local function CreateOptionsFrame()
 	MakeCheck(f, "zone", "Include zone in the /say message", "Adds the zone and subzone to the summon announcement.", 20, y - 38)
 	MakeCheck(f, "shards", "Include Soul Shard count", "Adds \"[N shards left]\" to the summon announcement.", 20, y - 60)
 	MakeCheck(f, "customMessage", "Use a custom /say message:", "Replaces the generated message. {name}, {zone} and {shards} are filled in for you.", 20, y - 82)
-	local msg = MakeInput(f, "LockPortMessageBox", "message", 280, 30, y - 106)
+	local msg = MakeInput(f, "LockPortMessageBox", "message", 340, 30, y - 106)
 	local hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	hint:SetPoint("TOPLEFT", msg, "BOTTOMLEFT", -4, -2)
 	hint:SetText("Tokens: {name}  {zone}  {shards}")
@@ -541,8 +577,10 @@ local function CreateOptionsFrame()
 	MakeCheck(f, "announceFail", "Tell the party/raid why a summon failed", "e.g. \"[LockPort] Can't summon Bob: Bob is in combat.\"", 20, y - 16)
 	MakeCheck(f, "whisperFail", "Whisper the player why it failed", "Lets them know they're still on the list and what to fix.", 20, y - 38)
 	MakeCheck(f, "whisperStatus", "Answer repeat 123s with a status whisper", "If someone types 123 while already here, or again while waiting, they're told why: already here, place in line, waiting on helpers, summoning someone else, etc. Only one LockPort warlock replies.", 20, y - 60)
-	MakeCheck(f, "announceOpen", "Post \"summons are open\" to the raid every", "Posts \"[LockPort] Summons are open - type 123 to get summoned. (N in line)\" on a timer while you're in a group. Skipped while you're in combat; with several LockPort warlocks only one posts each round.", 20, y - 82)
+	MakeCheck(f, "announceOpen", "Post \"summons are available\" every", "Posts \"[LockPort] Summons are available - type 123 to get summoned. (N in line)\" on a timer while you're in a group. Skipped while you're in combat; with several LockPort warlocks only one posts each round.", 20, y - 82)
 	local every = MakeInput(f, "LockPortAnnounceEveryBox", "announceOpenEvery", 26, 262, y - 84)
+	every:ClearAllPoints()
+	every:SetPoint("LEFT", checks.announceOpen.label, "RIGHT", 10, 0)
 	every:SetMaxLetters(2)
 	local everyHint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	everyHint:SetPoint("LEFT", every, "RIGHT", 6, 0)
@@ -627,7 +665,8 @@ local function CreateOptionsFrame()
 	modsHeader:SetText("Client mods")
 	local mods = f:CreateFontString("LockPortModsText", "OVERLAY", "GameFontHighlightSmall")
 	mods:SetPoint("TOP", modsHeader, "BOTTOM", 0, -4)
-	mods:SetWidth(300)
+	mods:SetWidth(360)
+	mods:SetHeight(32)
 	mods:SetJustifyH("CENTER")
 	f.mods = mods
 

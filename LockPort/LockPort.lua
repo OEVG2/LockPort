@@ -26,6 +26,14 @@ local PREFIX_WHISPER = "LPWhisper"   -- "<kind>:<name>" claim so only one warloc
 
 local CHAT_TAG = "|cff9482c9LockPort|r: "
 local ANNOUNCE_TAG = "[LockPort] "
+
+-- Keep all player-facing chat consistent, including custom summon messages.
+local function SendTaggedChatMessage(message, channel, language, target)
+	if string.lower(string.sub(message, 1, string.len(ANNOUNCE_TAG))) == string.lower(ANNOUNCE_TAG) then
+		message = string.sub(message, string.len(ANNOUNCE_TAG) + 1)
+	end
+	SendChatMessage(ANNOUNCE_TAG .. message, channel, language, target)
+end
 local REPO_URL = "https://github.com/Phaestas323/LockPort"
 
 LP.requests = {}   -- { {name=, t=}, ... } in request order
@@ -45,7 +53,7 @@ local DEFAULTS = {
 	announceFail  = true,   -- tell the party/raid why a summon failed
 	whisperFail   = true,   -- whisper the target why their summon failed
 	whisperStatus = true,   -- reply to "123" when already here / already on the list
-	announceOpen  = false,  -- post "summons are open - type 123" every few minutes
+	announceOpen  = false,  -- post "summons are available - type 123" every few minutes
 	announceOpenEvery = "3", -- minutes between those posts
 	readySound    = true,   -- chime when a summon becomes possible
 	askHelpers    = true,   -- ask the raid for portal clickers when fewer than 2 are near
@@ -118,6 +126,8 @@ end
 ---------------------------------------------------------------------------
 function LP:DetectMods()
 	local m = self.mods
+	m.classicapi = CLASSIC_API_VERSION ~= nil
+	m.lockport = self:HasNativeMod()
 	-- SuperWoW: GUIDs from UnitExists, UNIT_CASTEVENT, SpellInfo, UnitPosition
 	m.superwow = (SUPERWOW_VERSION ~= nil) or (SpellInfo ~= nil and UnitPosition ~= nil)
 	-- UnitXP SP3: true yard distances + taskbar flash
@@ -134,12 +144,15 @@ function LP:ModStatusText()
 	local function s(label, on) return label .. ": " .. (on and "|cff40ff40yes|r" or "|cff808080no|r") end
 	local m = self.mods
 	return s("SuperWoW", m.superwow) .. "   " .. s("Nampower", m.nampower) .. "   " ..
-	       s("UnitXP SP3", m.unitxp)
+	       s("UnitXP SP3", m.unitxp) .. "\n" ..
+	       s("ClassicAPI", CLASSIC_API_VERSION ~= nil) .. "   " .. s("LockPort", self:HasNativeMod())
 end
 
 function LP:PrintMods()
 	local m = self.mods
 	self:Print("client mods detected:")
+	DEFAULT_CHAT_FRAME:AddMessage("  ClassicAPI: " .. OnOff(CLASSIC_API_VERSION ~= nil) .. "  |cffaaaaaa- movement and active-cast checks|r")
+	DEFAULT_CHAT_FRAME:AddMessage("  LockPort: " .. OnOff(self:HasNativeMod()) .. "  |cffaaaaaa- Auto Summon|r")
 	DEFAULT_CHAT_FRAME:AddMessage("  SuperWoW: " .. OnOff(m.superwow) .. "  |cffaaaaaa- exact cast start/fail tracking for the ritual, Evil Twin by spell id, yard distances|r")
 	DEFAULT_CHAT_FRAME:AddMessage("  Nampower: " .. OnOff(m.nampower) .. "  |cffaaaaaa- server-confirmed spell failure events|r")
 	DEFAULT_CHAT_FRAME:AddMessage("  UnitXP SP3: " .. OnOff(m.unitxp) .. "  |cffaaaaaa- precise distance (\"already here\" check), taskbar flash on new requests|r")
@@ -451,10 +464,10 @@ function LP:Fail(name, key, rawText, extra, quiet)
 
 	local chan = self:GroupChannel()
 	if O.announceFail and chan then
-		SendChatMessage(ANNOUNCE_TAG .. "Can't summon " .. name .. ": " .. groupText .. ".", chan)
+		SendTaggedChatMessage(ANNOUNCE_TAG .. "Can't summon " .. name .. ": " .. groupText .. ".", chan)
 	end
 	if O.whisperFail and whisperText and key ~= "offline" and name ~= UnitName("player") then
-		SendChatMessage(ANNOUNCE_TAG .. "Couldn't summon you: " .. whisperText .. ".", "WHISPER", nil, name)
+		SendTaggedChatMessage(ANNOUNCE_TAG .. "Couldn't summon you: " .. whisperText .. ".", "WHISPER", nil, name)
 	end
 end
 
@@ -471,7 +484,135 @@ function LP:SummonNext()
 	end
 end
 
-function LP:Summon(name)
+
+---------------------------------------------------------------------------
+-- Auto Summon: session-only opt-in, available only with LockPort.dll.
+-- The DLL returns true for an attempted cast, never as proof of arrival.
+---------------------------------------------------------------------------
+function LP:HasNativeMod()
+	if type(GetLockPortVersion) ~= "function" or type(LockPortNativeSummon) ~= "function" then return false end
+	local ok, version = pcall(GetLockPortVersion)
+	return ok and version == "1.2.1"
+end
+
+function LP:SetRaidAutoSummon(enabled)
+	if enabled and (not self:HasNativeMod() or not self:InGroup() or not self:IsWarlock()) then
+		self:Print("Auto Summon needs LockPort.dll, a warlock, and a party or raid.")
+		return
+	end
+	if enabled and self.raidAutoSummon then return end
+	self.raidAutoSummon = enabled and true or false
+	self:TraceAuto("Auto Summon " .. (enabled and "enabled" or "disabled"))
+	self.autoReadyName, self.autoReadySince = nil, nil
+	if enabled then
+		LockPortOptions.announceOpen = true
+		self:OpenAnnounce(GetTime(), true)
+	else
+		LockPortOptions.announceOpen = false
+	end
+	self:Print("Auto Summon: " .. OnOff(self.raidAutoSummon))
+	self:RefreshOptions()
+	self:UpdateUI()
+end
+
+-- nil means no authoritative live cast-state provider is available.
+function LP:LiveCastBusy()
+	if not C_Spell or type(C_Spell.UnitCastingInfo) ~= "function"
+	    or type(C_Spell.UnitChannelInfo) ~= "function" then return nil end
+	local castOK, cast = pcall(C_Spell.UnitCastingInfo, "player")
+	local channelOK, channel = pcall(C_Spell.UnitChannelInfo, "player")
+	if not castOK or not channelOK then return nil end
+	return (cast ~= nil and cast ~= false) or (channel ~= nil and channel ~= false)
+end
+
+function LP:RecoverCastTracking(now)
+	if now < (self.nextCastPoll or 0) then return end
+	self.nextCastPoll = now + 0.25
+	local live = self:LiveCastBusy()
+	if live == nil then return end
+	-- Live state supersedes a cast-start flag whose stop event was missed.
+	self.castBusy = live and true or nil
+	local p = self.pending
+	if not p or p.done or not p.started then return end
+	if live or now - p.t < 2 then p.inactiveSince = nil; return end
+	p.inactiveSince = p.inactiveSince or now
+	if now - p.inactiveSince < 1.5 then return end
+	-- No completion event: resolve conservatively rather than claiming failure.
+	p.interrupted, p.intT = true, now
+	self:Print("recovered stale summon tracking for " .. p.name .. ".")
+	self:FinishPending()
+end
+
+function LP:TraceAuto(message)
+	self.autoTrace = self.autoTrace or {}
+	if self.lastAutoTrace == message then return end
+	self.lastAutoTrace = message
+	table.insert(self.autoTrace, {t = GetTime(), text = message})
+	if table.getn(self.autoTrace) > 12 then table.remove(self.autoTrace, 1) end
+end
+
+function LP:DebugSummon()
+	for _, entry in ipairs(self.autoTrace or {}) do
+		self:Print("trace " .. math.floor(GetTime() - entry.t) .. "s ago: " .. entry.text)
+	end
+	local ready, status = self:ReadyState()
+	self:Print("auto=" .. tostring(self.raidAutoSummon) .. " ready=" .. tostring(ready)
+	    .. " eventBusy=" .. tostring(self.castBusy) .. " liveBusy=" .. tostring(self:LiveCastBusy()))
+	self:Print("status=" .. tostring(status))
+	local p = self.pending
+	if p then
+		self:Print("pending=" .. tostring(p.name) .. " started=" .. tostring(p.started)
+		    .. " done=" .. tostring(p.done) .. " age=" .. math.floor(GetTime() - p.t)
+		    .. " stopped=" .. tostring(p.stopT) .. " interrupted=" .. tostring(p.interrupted))
+	end
+	if type(GetUnitSpeed) == "function" then
+		local ok, speed = pcall(GetUnitSpeed, "player")
+		self:Print("movement=" .. (ok and tostring(speed) or "unavailable"))
+	end
+	if type(GetLockPortVersion) == "function" then
+		local ok, version = pcall(GetLockPortVersion)
+		self:Print("native=" .. (ok and tostring(version) or "unavailable"))
+	end
+end
+
+function LP:CheckRaidAutoSummon(now)
+	if not self.raidAutoSummon then return end
+	if not self:HasNativeMod() or not self:InGroup() then
+		self:SetRaidAutoSummon(false)
+		return
+	end
+	-- ClassicAPI is optional. Use its live movement and cast state when present.
+	local live = self:LiveCastBusy()
+	local busy = self.castBusy
+	if live ~= nil then busy = live end
+	if type(GetUnitSpeed) == "function" then
+		local ok, speed = pcall(GetUnitSpeed, "player")
+		if ok and type(speed) == "number" and speed > 0 then busy = true end
+	end
+	local ready, reason = self:ReadyState()
+	if not ready or busy then
+		self:TraceAuto(busy and "waiting: moving or casting" or ("waiting: " .. (reason or "request list empty")))
+		self.autoReadyName, self.autoReadySince = nil, nil
+		return
+	end
+	local e = self:NextCandidate()
+	if not e then return end
+	if self.autoReadyName ~= e.name then
+		self:TraceAuto("ready: " .. e.name .. "; waiting 2 seconds")
+		self.autoReadyName, self.autoReadySince = e.name, now
+		return
+	end
+	-- Give other warlocks' claims time to arrive before casting.
+	if now - self.autoReadySince < 2 then return end
+	self.autoReadyName, self.autoReadySince = nil, nil
+	self.autoRetryAfter = self.autoRetryAfter or {}
+	-- An interrupted ritual may still have an acceptance prompt outstanding.
+	-- Wait before an automatic retry; manual retries remain available.
+	self.autoRetryAfter[e.name] = now + 130
+	self:Summon(e.name, true)
+end
+
+function LP:Summon(name, automatic)
 	if not self:IsWarlock() then return self:Print("only warlocks can summon.") end
 	if self.pending and not self.pending.done then
 		return self:Print("already summoning " .. self.pending.name .. ".")
@@ -506,10 +647,22 @@ function LP:Summon(name)
 	end
 
 	-- The ritual summons the warlock's target, so keep it targeted until the portal completes.
-	self.pending = { name = name, unit = unit, t = GetTime() }
+	self.pending = { name = name, unit = unit, t = GetTime(), automatic = automatic }
+	self:TraceAuto((automatic and "automatic" or "manual") .. " cast requested: " .. name .. " (" .. unit .. ")")
 	self:SendAddon(PREFIX_WHISPER, "summon:" .. name)   -- other warlocks' Summon Next skips this player for a bit
 	TargetUnit(unit)
-	CastSpellByName(self.SPELL)
+	if automatic then
+		local ok, attempted, reason = pcall(LockPortNativeSummon, unit)
+		self:TraceAuto("native result: " .. tostring(attempted) .. "; " .. tostring(reason))
+		if not ok or not attempted then
+			self.pending = nil
+			self.autoRetryAfter = self.autoRetryAfter or {}
+			self.autoRetryAfter[name] = GetTime() + 10
+			self:Print("native summon not sent: " .. tostring(reason or attempted))
+		end
+	else
+		CastSpellByName(self.SPELL)
+	end
 	self:UpdateUI()
 end
 
@@ -557,7 +710,8 @@ function LP:NextCandidate()
 		local claimT = self.claims["summon:" .. e.name]
 		local claimed = claimT and now - claimT < 20
 		local skipped = self.skipUntil[e.name] and now < self.skipUntil[e.name]
-		if not claimed and not skipped and not self:TargetProblem(e.info) then
+		local autoWaiting = self.raidAutoSummon and self.autoRetryAfter and self.autoRetryAfter[e.name] and now < self.autoRetryAfter[e.name]
+		if not claimed and not skipped and not autoWaiting and not self:TargetProblem(e.info) then
 			return e
 		end
 	end
@@ -648,13 +802,13 @@ function LP:HelperCall(now)
 		msg = ANNOUNCE_TAG .. "Need " .. who .. " at " .. self:WhereText() .. " to help summon - " ..
 		      waiting .. (waiting == 1 and " player" or " players") .. " waiting."
 	end
-	SendChatMessage(msg, chan)
+	SendTaggedChatMessage(msg, chan)
 	self:SendAddon(PREFIX_WHISPER, "help")
 	self.nextHelpAt = now + 120
 end
 
 ---------------------------------------------------------------------------
--- "Summons are open - type 123" to the party/raid every N minutes (option).
+-- "Summons are available - type 123" to the party/raid every N minutes (option).
 -- Skipped in combat; with several LockPort warlocks only one posts per round.
 ---------------------------------------------------------------------------
 function LP:TriggerWord()
@@ -681,9 +835,9 @@ function LP:OpenAnnounce(now, force)
 		return
 	end
 	local n = table.getn(self.requests)
-	local msg = ANNOUNCE_TAG .. "Summons are open - type " .. self:TriggerWord() .. " to get summoned."
+	local msg = ANNOUNCE_TAG .. "Summons are available - type " .. self:TriggerWord() .. " to get summoned."
 	if n > 0 then msg = msg .. " (" .. n .. " in line)" end
-	SendChatMessage(msg, chan)
+	SendTaggedChatMessage(msg, chan)
 	self:SendAddon(PREFIX_WHISPER, "announce")
 	self.nextAnnounceAt = now + period
 end
@@ -691,8 +845,9 @@ end
 -- The ritual really started: announce and take the name off everyone's list.
 function LP:OnRitualStarted()
 	local p = self.pending
-	if not p or p.started then return end
+	if not p or p.done or p.started then return end
 	p.started = true
+	self:TraceAuto("cast started: " .. p.name)
 	p.failed = nil
 	local O = LockPortOptions
 	local name = p.name
@@ -713,12 +868,12 @@ function LP:OnRitualStarted()
 		if O.shards then msg = msg .. " [" .. shards .. " shards left]" end
 		msg = msg .. ", please click the portal!"
 	end
-	SendChatMessage(msg, "SAY")
+	SendTaggedChatMessage(msg, "SAY")
 
 	if O.whisper then
 		local w = "Summoning you"
 		if O.zone then w = w .. " to " .. where end
-		SendChatMessage(w .. ". Accept when the prompt shows up!", "WHISPER", nil, name)
+		SendTaggedChatMessage(w .. ". Accept when the prompt shows up!", "WHISPER", nil, name)
 	end
 
 	self:RemoveRequest(name, true)
@@ -733,19 +888,39 @@ function LP:FinishPending()
 		self.watch = { name = p.name, unit = p.unit, t = GetTime() }
 		self:Print("ritual for " .. p.name .. " complete - waiting for them to accept.")
 	elseif p.started and p.interrupted then
-		-- put them back on everyone's list
-		self:AddRequest(p.name, true)
-		self:Fail(p.name, "interrupt")
+		-- Ending the summoning channel is ambiguous on 1.12 clients: it can
+		-- happen when helpers complete the ritual as well as when cancelled.
+		-- Never announce failure or penalize the player from this alone.
+		-- Resolve the current roster unit; party/raid indices may have changed.
+		local info = self:ScanRoster()[p.name]
+		if info and UnitName(info.unit) == p.name and self:IsNearby(info.unit) then
+			self:RemoveRequest(p.name, true)
+			self:NoteResult(p.name, true)
+			self:Print("|cff40ff40" .. p.name .. " has arrived.|r")
+		else
+			self:AddRequest(p.name, true)
+			self.watch = { name = p.name, unit = info and info.unit or p.unit,
+			               t = GetTime(), unconfirmed = true }
+			self:Print("ritual for " .. p.name .. " ended - completion unconfirmed; kept on the list for retry.")
+		end
 	else
+		self:TraceAuto("cast did not start: " .. p.name .. "; " .. tostring(p.err))
+		if p.automatic then
+			self.autoRetryAfter = self.autoRetryAfter or {}
+			self.autoRetryAfter[p.name] = GetTime() + 10
+		end
 		if p.err then self:Fail(p.name, nil, p.err) else self:Fail(p.name, "nostart") end
 	end
-	self:NoteResult(p.name, p.started and not p.interrupted)
+	if not (p.started and p.interrupted) then
+		self:NoteResult(p.name, p.started and not p.interrupted)
+	end
 	self:UpdateUI()
 end
 
 -- Called every frame from the event frame.
 function LP:OnUpdate(elapsed)
 	local now = GetTime()
+	self:RecoverCastTracking(now)
 	if self.whisperQueue[1] then self:ProcessWhisperQueue(now) end
 	local p = self.pending
 	if p and not p.done then
@@ -773,9 +948,16 @@ function LP:OnUpdate(elapsed)
 	if w then
 		if now - w.t > 180 then
 			self.watch = nil
-		elseif UnitName(w.unit) == w.name and self:IsNearby(w.unit) then
-			self:Print("|cff40ff40" .. w.name .. " has arrived.|r")
-			self.watch = nil
+		else
+			local info = self:ScanRoster()[w.name]
+			if info and UnitName(info.unit) == w.name and self:IsNearby(info.unit) then
+				if w.unconfirmed then
+					self:RemoveRequest(w.name, true)
+					self:NoteResult(w.name, true)
+				end
+				self:Print("|cff40ff40" .. w.name .. " has arrived.|r")
+				self.watch = nil
+			end
 		end
 	end
 	if table.getn(self.requests) > 0 then
@@ -783,6 +965,7 @@ function LP:OnUpdate(elapsed)
 	end
 	self:OpenAnnounce(now)
 	self:CheckReady()
+	self:CheckRaidAutoSummon(now)
 	self:HelperCall(now)
 	self:UpdateUI()
 end
@@ -827,7 +1010,7 @@ function LP:OnTrigger(name, info, event)
 			self.watch = nil
 		elseif event == "CHAT_MSG_WHISPER" then
 			local pos = self:QueuePosition(name)
-			SendChatMessage(ANNOUNCE_TAG .. "You're on the summon list" .. (pos and (" (#" .. pos .. ")") or "") .. ".", "WHISPER", nil, name)
+			SendTaggedChatMessage(ANNOUNCE_TAG .. "You're on the summon list" .. (pos and (" (#" .. pos .. ")") or "") .. ".", "WHISPER", nil, name)
 		end
 	end
 end
@@ -919,7 +1102,7 @@ function LP:ProcessWhisperQueue(now)
 			table.remove(q, i)
 			self.claims[w.key] = now
 			self:SendAddon(PREFIX_WHISPER, w.key)
-			SendChatMessage(ANNOUNCE_TAG .. w.text, "WHISPER", nil, w.name)
+			SendTaggedChatMessage(ANNOUNCE_TAG .. w.text, "WHISPER", nil, w.name)
 		end
 	end
 end
@@ -949,6 +1132,20 @@ local CHAT_EVENTS = {
 }
 
 function LP:OnEvent(event)
+	-- Track all casts so automatic summons do not interrupt another spell.
+	if event == "SPELLCAST_START" or event == "SPELLCAST_CHANNEL_START" then
+		self.castBusy = true
+	elseif event == "SPELLCAST_STOP" or event == "SPELLCAST_CHANNEL_STOP"
+	    or event == "SPELLCAST_FAILED" or event == "SPELLCAST_INTERRUPTED" then
+		self.castBusy = nil
+	end
+	if event == "PLAYER_ENTERING_WORLD" then
+		self.castBusy = nil
+	end
+	if (event == "RAID_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED")
+	    and self.raidAutoSummon and not self:InGroup() then
+		self:SetRaidAutoSummon(false)
+	end
 	if event == "VARIABLES_LOADED" then return self:Initialize() end
 	if not LockPortOptions then return end
 	if CHAT_EVENTS[event] then
@@ -1044,6 +1241,10 @@ function LP:Initialize()
 	for k, v in pairs(DEFAULTS) do
 		if O[k] == nil then O[k] = v end
 	end
+	-- Availability announcements, like Auto Summon, require a fresh opt-in each session.
+	self.raidAutoSummon = false
+	O.announceOpen = false
+	self.nextAnnounceAt = nil
 	self:DetectMods()
 	local ev = self.eventFrame
 	if self.mods.superwow then ev:RegisterEvent("UNIT_CASTEVENT") end
@@ -1103,12 +1304,14 @@ function LP:Slash(msg)
 
 	if cmd == "" or cmd == "toggle" then
 		self:Toggle()
+	elseif cmd == "debug" then
+		self:DebugSummon()
 	elseif cmd == "help" then
 		self:Print("commands:")
 		local lines = {
 			"|cffffd200/lockport|r - show / hide the window",
 			"|cffffd200/lockport next|r - summon the next person in line",
-			"|cffffd200/lockport open|r - toggle the \"summons are open\" raid posts",
+			"|cffffd200/lockport available|r - toggle the \"summons are available\" raid posts",
 			"|cffffd200/lockport add [name]|r - add a name (or your target)",
 			"|cffffd200/lockport remove <name>|r, |cffffd200clear|r - edit the list",
 			"|cffffd200/lockport show|r - print the list",
@@ -1146,9 +1349,10 @@ function LP:Slash(msg)
 		self:RefreshOptions()
 	elseif cmd == "style" or cmd == "theme" then
 		self:ToggleTheme()
-	elseif cmd == "open" then
+	elseif cmd == "available" or cmd == "open" then
+		if self.raidAutoSummon then return self:Print("turn off Auto Summon before disabling availability announcements.") end
 		O.announceOpen = not O.announceOpen
-		self:Print("\"summons are open\" announcements: " .. OnOff(O.announceOpen))
+		self:Print("\"summons are available\" announcements: " .. OnOff(O.announceOpen))
 		if O.announceOpen then self:OpenAnnounce(GetTime(), true) end
 		self:RefreshOptions()
 	elseif cmd == "mods" then
@@ -1197,7 +1401,7 @@ local EVENTS = {
 	"VARIABLES_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON",
 	"CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_WHISPER",
 	"CHAT_MSG_PARTY", "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER",
-	"UI_ERROR_MESSAGE", "SPELLCAST_START", "SPELLCAST_CHANNEL_START", "SPELLCAST_CHANNEL_STOP",
+	"UI_ERROR_MESSAGE", "SPELLCAST_START", "SPELLCAST_STOP", "SPELLCAST_CHANNEL_START", "SPELLCAST_CHANNEL_STOP",
 	"SPELLCAST_FAILED", "SPELLCAST_INTERRUPTED",
 	"RAID_ROSTER_UPDATE", "PARTY_MEMBERS_CHANGED", "SPELLS_CHANGED", "LEARNED_SPELL_IN_TAB", "BAG_UPDATE",
 }
