@@ -208,3 +208,24 @@ for enabled_by_auto in (True, False):
     after.execute(core)
     after.execute("LockPort:OpenAnnounce(1000); assert(sent==0)")
     print("PASS reload clears announcements", "auto" if enabled_by_auto else "manual")
+
+# Chat dispatch uses stable message/sender values and never replays an outer chat
+# event while handling a nested spell or addon-sync event.
+def chat_check(name, reader, globals_text="123", globals_sender="Bob"):
+    L=env()
+    L.globals().arg1=globals_text; L.globals().arg2=globals_sender
+    L.execute(r'''
+    LP.MatchesTrigger=function(self,text) return text=="123" end
+    LP.ScanRoster=function() arg1="clobbered";arg2="Wrong";return {Bob={unit="raid2"}} end
+    LP.OnTrigger=function(self,name,info,event) triggered=(triggered or 0)+1;assert(name=="Bob" and info.unit=="raid2");triggerEvent=event end
+    ''')
+    L.execute(reader)
+    L.execute('LP:OnEvent("CHAT_MSG_RAID");assert(triggered==1 and triggerEvent=="CHAT_MSG_RAID")')
+    print("PASS",name)
+chat_check("ClassicAPI chat payload survives overwritten globals",'GetCurrentChatEvent=function() return "CHAT_MSG_RAID","123","Bob" end',"wrong","Wrong")
+chat_check("legacy chat fallback snapshots sender before roster scan",'GetCurrentChatEvent=nil')
+chat_check("empty ClassicAPI chat result uses legacy fallback",'GetCurrentChatEvent=function() end')
+chat_check("ClassicAPI chat errors use legacy fallback",'GetCurrentChatEvent=function() error("unavailable") end')
+check("non-request actual payload does not use corrupted trigger globals",r'''GetCurrentChatEvent=function() return "CHAT_MSG_RAID","hello","Bob" end;arg1="123";arg2="Bob";LP.OnTrigger=function() error("false request") end;LP:OnEvent("CHAT_MSG_RAID")''')
+check("nested spell event does not replay outer chat",r'''GetCurrentChatEvent=function() return "CHAT_MSG_RAID","123","Bob" end;LP.OnTrigger=function() error("duplicate request") end;arg1="Shadow Bolt";LP:OnEvent("SPELLCAST_START");assert(LP.castBusy)''')
+check("addon sync payload is not replaced by chat reader",r'''GetCurrentChatEvent=function() error("must not read addon sync") end;LP.AddRequest=function(self,name) assert(name=="Bob");synced=true end;LP.ScanRoster=function() return {} end;arg1="RSAdd";arg2="Bob";arg4="Other";LockPortOptions.autoRemove=false;LP:OnEvent("CHAT_MSG_ADDON");assert(synced)''')

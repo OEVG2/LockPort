@@ -3,13 +3,19 @@
 Easy warlock summoning for World of Warcraft 1.12 / Turtle WoW 1.18.
 Originally written by Gurky.
 
-Current version: **3.7.4**. Optional companion client mod: **LockPort.dll 1.2.1**.
+Current version: **3.7.5**. Optional companion client mod: **LockPort.dll 1.2.1**.
 
 ## Installation
 
 Download this repository and copy its `LockPort` folder into `Interface/AddOns`.
 For manual summoning, the addon alone is sufficient. To use Auto Summon, follow
 [the client mod installation instructions](native/README.md).
+
+## Changes in 3.7.5
+
+Uses ClassicAPI GetCurrentChatEvent when available to read summon requests reliably
+when other addons overwrite shared chat arguments. Older clients retain the
+legacy fallback. No DLL replacement is required from DLL 1.2.1.
 
 ## Changes in 3.7.4
 

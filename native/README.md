@@ -1,6 +1,6 @@
 # LockPort client mod 1.2.1
 
-Optional companion for LockPort 3.7.4. The addon works without it for manual summons.
+Optional companion for LockPort 3.7.5. The addon works without it for manual summons.
 
 ## Install with VanillaFixes
 
@@ -11,7 +11,7 @@ Optional companion for LockPort 3.7.4. The addon works without it for manual sum
 5. Add one line containing LockPort.dll at the end of dlls.txt, after other client mods.
 6. Launch through VanillaFixes. Join a party or raid on a warlock and enable Auto Summon.
 
-Updating from addon 3.7.2 or 3.7.3 needs only the addon folder and /reload.
+Updating from addon 3.7.2, 3.7.3, or 3.7.4 needs only the addon folder and /reload.
 Earlier DLL versions must be replaced, followed by a full client restart.
 /lockport debug should report native=1.2.1.
 

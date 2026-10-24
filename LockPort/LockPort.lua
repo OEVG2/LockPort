@@ -1149,9 +1149,18 @@ function LP:OnEvent(event)
 	if event == "VARIABLES_LOADED" then return self:Initialize() end
 	if not LockPortOptions then return end
 	if CHAT_EVENTS[event] then
-		if arg1 and arg2 and self:MatchesTrigger(arg1) then
-			local info = self:ScanRoster()[arg2]
-			if info then self:OnTrigger(arg2, info, event) end
+		-- Snapshot chat arguments before calling other addon/game code. Newer
+		-- ClassicAPI reads the actual event payload even if a hook changed globals.
+		local message, sender, chatEvent = arg1, arg2, event
+		if type(GetCurrentChatEvent) == "function" then
+			local ok, actualEvent, actualMessage, actualSender = pcall(GetCurrentChatEvent)
+			if ok and CHAT_EVENTS[actualEvent] then
+				chatEvent, message, sender = actualEvent, actualMessage, actualSender
+			end
+		end
+		if type(message) == "string" and type(sender) == "string" and self:MatchesTrigger(message) then
+			local info = self:ScanRoster()[sender]
+			if info then self:OnTrigger(sender, info, chatEvent) end
 		end
 
 	elseif event == "CHAT_MSG_ADDON" then

@@ -1,3 +1,26 @@
+# ClassicAPI 1.17.6 follow-up
+
+Compared tagged v1.17.1 with v1.17.6. LockPort 3.7.5 optionally uses the new
+GetCurrentChatEvent() for summon-request message and sender values. The reader
+is feature-detected, protected with pcall, and falls back to snapshotted legacy
+arguments if unavailable, empty, or failing. It is used only in the supported
+request-chat event branch; spell and addon-sync events keep their original paths.
+Roster membership remains mandatory. The DLL stays at 1.2.1.
+
+Regression coverage includes overwritten globals, legacy fallback, reader errors,
+non-trigger payloads, nested spell events, and addon synchronization.
+
+The new profiling APIs are useful for developer diagnostics, but are not enabled
+or queried automatically. The modifier-key fix benefits Lua bindings upstream.
+Player-cache improvements are unnecessary for the current group roster logic.
+
+Sources:
+- https://github.com/brues-code/ClassicAPI/releases/tag/v1.17.6
+- https://github.com/brues-code/ClassicAPI/compare/v1.17.1...v1.17.6
+- https://github.com/brues-code/ClassicAPI/blob/v1.17.6/docs/API.md#getcurrentchatevent
+
+---
+
 # ClassicAPI 1.17.1 review
 
 Reviewed the tagged 1.17.1 API documentation, release, and source comparison
