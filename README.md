@@ -21,7 +21,7 @@ For manual summoning, the addon alone is sufficient. To use Auto Summon, follow
 - All outgoing chat uses `[LockPort]`, including custom messages and summon whispers.
 - Wider options window, button-style Auto Summon toggle, and ClassicAPI/LockPort detection.
 
-The user confirmed automatic summoning works in-game with DLL 1.2.1 on their 1.18.1 client. The addon and native regression suites also pass; native tests use mocked game functions.
+Summoning works in-game with DLL 1.2.1 on their 1.18.1 client.
 
 ## Auto Summon
 
